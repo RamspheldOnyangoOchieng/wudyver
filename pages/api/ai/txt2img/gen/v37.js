@@ -132,7 +132,7 @@ class ImageGenerator {
   }
   async generate({
     prompt,
-    mode = "diffusion",
+    mode = "opendalle",
     ...rest
   }) {
     console.log(`Memulai generate dengan mode: ${mode}`);

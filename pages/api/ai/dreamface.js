@@ -5,13 +5,15 @@ import {
   createHash
 } from "crypto";
 import FormData from "form-data";
+import crypto from "crypto";
 import SpoofHead from "@/lib/spoof-head";
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 class DreamFace {
   constructor() {
     const httpsAgent = new https.Agent({
       keepAlive: true,
-      maxSockets: 100
+      maxSockets: 100,
+      timeout: 6e4
     });
     this.api = axios.create({
       baseURL: "https://tools.dreamfaceapp.com/dw-server",
@@ -23,10 +25,11 @@ class DreamFace {
         referer: "https://tools.dreamfaceapp.com/tools/ai-image",
         ...SpoofHead()
       },
-      httpsAgent: httpsAgent
+      httpsAgent: httpsAgent,
+      timeout: 6e4
     });
     this.credentials = {};
-    console.log("DreamFace client initialized with HTTPS Agent.");
+    console.log("DreamFace client initialized with increased HTTPS timeout.");
   }
   _rand(len = 8) {
     return randomBytes(len).toString("hex");
@@ -48,14 +51,9 @@ class DreamFace {
   }
   async _initSession() {
     console.log("Initializing user session and attempting to claim free credits...");
-    const commonPayload = {
+    const accountPayload = {
       platform_type: "MOBILE",
       tenant_name: "dream_face",
-      platformType: "MOBILE",
-      tenantName: "dream_face"
-    };
-    const accountPayload = {
-      ...commonPayload,
       account_id: this.credentials.accountId,
       user_id: this.credentials.userId
     };
@@ -69,17 +67,6 @@ class DreamFace {
       data: {
         ...accountPayload,
         play_types: ["TEXT_TO_IMAGE_GPT"]
-      },
-      headers: {
-        "content-type": "application/json"
-      }
-    });
-    await this._req({
-      url: "/credits/get_remaining_credits",
-      method: "POST",
-      data: {
-        ...accountPayload,
-        time_zone: "Asia/Jakarta"
       },
       headers: {
         "content-type": "application/json"
@@ -127,10 +114,10 @@ class DreamFace {
       }
     });
     this.credentials.credits = creditsData;
-    console.log(`Claim sequence completed. Final free credits: ${creditsData?.free_count || 0}`);
+    console.log(`Credit check completed. Free credits: ${creditsData?.free_count || 0}`);
   }
   async _login() {
-    console.log("Attempting to log in...");
+    console.log("Attempting to log in and create a new account...");
     const email = `${this._rand(12)}@mail.com`;
     const password = this._rand(8);
     const initialUserId = createHash("md5").update(this._rand(16)).digest("hex");
@@ -144,9 +131,7 @@ class DreamFace {
       },
       register_source: "seo",
       platform_type: "MOBILE",
-      tenant_name: "dream_face",
-      platformType: "MOBILE",
-      tenantName: "dream_face"
+      tenant_name: "dream_face"
     };
     const loginData = await this._req({
       url: "/user/login",
@@ -161,7 +146,7 @@ class DreamFace {
       account_id: accountId,
       user_id: userId
     } = loginData;
-    if (!token || !accountId || !userId) throw new Error("Login failed.");
+    if (!token || !accountId || !userId) throw new Error("Login failed: Missing token or user IDs.");
     this.credentials = {
       token: token,
       userId: userId,
@@ -180,14 +165,15 @@ class DreamFace {
       imageBuffer = image;
     } else if (typeof image === "string" && image.startsWith("http")) {
       console.log(`Processing image from URL: ${image}`);
-      imageBuffer = (await axios.get(image, {
+      const response = await axios.get(image, {
         responseType: "arraybuffer"
-      })).data;
+      });
+      imageBuffer = response.data;
     } else if (typeof image === "string") {
       console.log(`Processing image from Base64 string...`);
       imageBuffer = Buffer.from(image, "base64");
     } else {
-      throw new Error("Unsupported image type.");
+      throw new Error("Unsupported image type. Please provide a Buffer, URL, or Base64 string.");
     }
     const form = new FormData();
     form.append("file", imageBuffer, {
@@ -209,40 +195,64 @@ class DreamFace {
   }
   async _poll(taskId) {
     console.log(`Polling for task result with ID: ${taskId}`);
-    const maxAttempts = 20;
+    const maxAttempts = 30;
     for (let attempts = 1; attempts <= maxAttempts; attempts++) {
-      await delay(3e3);
+      await delay(5e3);
       console.log(`[Attempt ${attempts}/${maxAttempts}] Checking task status...`);
-      const pollData = await this._req({
-        url: "/work_session/list",
-        method: "POST",
-        data: {
-          user_id: this.credentials.userId,
-          account_id: this.credentials.accountId,
-          page: 1,
-          size: 10,
-          session_type: "AI_IMAGE",
-          platform_type: "MOBILE",
-          tenant_name: "dream_face",
-          platformType: "MOBILE",
-          tenantName: "dream_face"
-        },
-        headers: {
-          "content-type": "application/json"
+      try {
+        const pollData = await this._req({
+          url: "/work_session/list",
+          method: "POST",
+          data: {
+            user_id: this.credentials.userId,
+            account_id: this.credentials.accountId,
+            page: 1,
+            size: 10,
+            session_type: "AI_IMAGE",
+            platform_type: "MOBILE",
+            tenant_name: "dream_face"
+          },
+          headers: {
+            "content-type": "application/json"
+          }
+        });
+        const task = pollData?.list?.find(item => item.work_details?.[0]?.animate_id === taskId);
+        const workDetails = task?.work_details?.[0];
+        if (workDetails) {
+          const workStatus = workDetails.work_status;
+          if (workStatus === 200) {
+            console.log("Task completed successfully!");
+            return task;
+          }
+          if (workStatus === -1 || task?.session_status === -1) {
+            console.error(`Task ${taskId} failed on the server.`);
+            const errorMessage = workDetails.work_msg || `Generation task failed with server status: ${workStatus}.`;
+            throw new Error(errorMessage);
+          }
         }
-      });
-      const task = pollData?.list?.find(item => item.work_details?.[0]?.animate_id === taskId);
-      const workStatus = task?.work_details?.[0]?.work_status;
-      if (workStatus === 200) {
-        console.log("Task completed successfully!");
-        return task;
-      }
-      if (workStatus === -1 || task?.session_status === -1) {
-        console.error("Task failed on the server. Aborting poll.");
-        throw new Error(`Generation task failed with server status: ${workStatus}.`);
+      } catch (pollError) {
+        console.error(`An error occurred during polling attempt ${attempts}:`, pollError.message);
+        if (pollError.message.includes("failed with server status")) {
+          throw pollError;
+        }
       }
     }
-    throw new Error(`Task polling timed out.`);
+    throw new Error(`Task polling timed out for task ID: ${taskId}.`);
+  }
+  async _waitForCredits(maxAttempts = 10, interval = 3e4) {
+    for (let i = 1; i <= maxAttempts; i++) {
+      await this._initSession();
+      const credits = this.credentials.credits?.free_count ?? 0;
+      if (credits > 0) {
+        console.log(`Credits available: ${credits}. Proceeding with generation.`);
+        return;
+      }
+      if (i < maxAttempts) {
+        console.log(`Attempt ${i}/${maxAttempts}: No free credits. Waiting for ${interval / 1e3}s before retrying...`);
+        await delay(interval);
+      }
+    }
+    throw new Error("Account has no free credits after multiple attempts. Aborting.");
   }
   async generate({
     prompt,
@@ -252,12 +262,9 @@ class DreamFace {
     ...rest
   }) {
     if (!this.credentials.token) await this._login();
-    const credits = this.credentials.credits?.free_count ?? 0;
-    if (credits <= 0) {
-      throw new Error(`Account has no free credits remaining (${credits}) after claim attempt. Generation aborted.`);
-    }
-    console.log(`Credits check passed. Starting generation with ${credits} free credits.`);
-    const isImg2Img = !!imageUrl && (Array.isArray(imageUrl) ? imageUrl.length > 0 : true);
+    await this._waitForCredits();
+    console.log(`Starting generation...`);
+    const isImg2Img = !!imageUrl;
     let photoInfoList = [{
       photo_path: ""
     }];
@@ -265,7 +272,8 @@ class DreamFace {
       const urls = Array.isArray(imageUrl) ? imageUrl : [imageUrl];
       const uploadedUrls = [];
       for (const url of urls) {
-        uploadedUrls.push(await this._upload(url));
+        const uploadedPath = await this._upload(url);
+        uploadedUrls.push(uploadedPath);
       }
       photoInfoList = uploadedUrls.map(path => ({
         photo_path: path
@@ -298,12 +306,11 @@ class DreamFace {
         }],
         model: finalModel,
         quality: "low",
-        ratio: finalRatio
+        ratio: finalRatio,
+        ...rest
       },
       platform_type: "MOBILE",
-      tenant_name: "dream_face",
-      platformType: "MOBILE",
-      tenantName: "dream_face"
+      tenant_name: "dream_face"
     };
     const generationData = await this._req({
       url: "/face/animate_image_web",

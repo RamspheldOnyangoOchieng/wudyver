@@ -1655,6 +1655,7 @@ export default function handler(req, res) {
     { path: "/api/tools/whisper", name: "Whisper", params: [{ "name": "prompt", "in": "query", "required": false }], },
     { path: "/api/tools/whatsapp", name: "Whatsapp", params: [{ "name": "prompt", "in": "query", "required": false }], },
     { path: "/api/tools/remove-wm/v1", name: "V1", params: [{ "name": "prompt", "in": "query", "required": false }], },
+    { path: "/api/tools/web2app", name: "Web2app", params: [{ "name": "prompt", "in": "query", "required": false }], },
     { path: "/api/top-up/v1", name: "V1", params: [{ "name": "prompt", "in": "query", "required": false }], },
     { path: "/api/top-up/v2", name: "V2", params: [{ "name": "prompt", "in": "query", "required": false }], },
     { path: "/api/top-up/v3", name: "V3", params: [{ "name": "prompt", "in": "query", "required": false }], },
