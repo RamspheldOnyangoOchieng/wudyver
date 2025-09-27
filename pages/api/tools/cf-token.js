@@ -13,7 +13,7 @@ class CaptchaSolver {
   async run({
     url,
     sitekey,
-    ver = "v2",
+    ver = "v1",
     act = "turnstile",
     type = "turnstile-min",
     ...rest
