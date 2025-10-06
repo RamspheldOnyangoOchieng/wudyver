@@ -43,4 +43,5 @@ const viralPrompts = [{
 }];
 const randomIndex = Math.floor(Math.random() * viralPrompts.length);
 const randomPromptObject = viralPrompts[randomIndex];
+console.log(randomPromptObject);
 export default randomPromptObject;
