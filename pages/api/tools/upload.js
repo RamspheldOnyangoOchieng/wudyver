@@ -16,7 +16,7 @@ import * as cheerio from "cheerio";
 import ora from "ora";
 import chalk from "chalk";
 import _ from "lodash";
-import formidable from "formidable";
+import Busboy from "busboy";
 const referer = "https://krakenfiles.com";
 const uloadUrlRegexStr = /url: "([^"]+)"/;
 const generateSlug = crypto.createHash("md5").update(`${Date.now()}-${uuidv4()}`).digest("hex").substring(0, 8);
@@ -1079,59 +1079,52 @@ class Uploader {
 }
 export const config = {
   api: {
-    bodyParser: false
+    bodyParser: false,
+    responseLimit: false
   }
-};
-const formidableConfig = {
-  maxFileSize: Infinity,
-  maxFieldsSize: Infinity,
-  maxFields: 10,
-  allowEmptyFiles: true,
-  multiples: true
 };
 async function parseForm(req) {
   return new Promise((resolve, reject) => {
-    const form = formidable(formidableConfig);
+    const busboy = Busboy({
+      headers: req.headers,
+      limits: {}
+    });
     const fields = {};
+    const chunks = [];
+    let fileName = "unknown_file";
     let fileBuffer = null;
-    let fileName = null;
-    let fileReceived = false;
-    form.on("field", (name, value) => {
-      if (fields[name]) {
-        if (!Array.isArray(fields[name])) {
-          fields[name] = [fields[name]];
+    busboy.on("field", (fieldname, val) => {
+      if (fields[fieldname]) {
+        if (!Array.isArray(fields[fieldname])) {
+          fields[fieldname] = [fields[fieldname]];
         }
-        fields[name].push(value);
+        fields[fieldname].push(val);
       } else {
-        fields[name] = value;
+        fields[fieldname] = val;
       }
     });
-    form.on("file", (formName, file) => {
-      if (fileReceived) return;
-      fileReceived = true;
-      const chunks = [];
-      fileName = file.originalFilename;
-      file.on("data", chunk => {
-        chunks.push(chunk);
+    busboy.on("file", (fieldname, file, {
+      filename
+    }) => {
+      fileName = filename;
+      file.on("data", data => {
+        chunks.push(data);
       });
       file.on("end", () => {
         fileBuffer = Buffer.concat(chunks);
       });
-      file.on("error", err => {
-        return reject(err);
-      });
     });
-    form.on("error", err => {
-      return reject(err);
-    });
-    form.on("end", () => {
+    busboy.on("finish", () => {
       resolve({
+        fields: fields,
         buffer: fileBuffer,
-        fileName: fileName || "unknown_file",
-        fields: fields
+        fileName: fileName
       });
     });
-    form.parse(req);
+    busboy.on("error", err => {
+      reject(err);
+    });
+    req.pipe(busboy);
   });
 }
 export default async function handler(req, res) {
@@ -1150,10 +1143,11 @@ export default async function handler(req, res) {
   try {
     let buffer;
     let fileName = "unknown_file";
-    let host = req.query.host || "Tmpfiles";
+    let host;
     const contentType = req.headers["content-type"] || "";
     if (contentType.startsWith("multipart/form-data")) {
       const {
+        fields,
         buffer: fileBuffer,
         fileName: uploadedFileName
       } = await parseForm(req);
@@ -1164,6 +1158,7 @@ export default async function handler(req, res) {
       }
       buffer = fileBuffer;
       fileName = uploadedFileName;
+      host = fields.host || req.query.host || "Tmpfiles";
     } else {
       let rawBody = "";
       await new Promise((resolve, reject) => {
@@ -1179,12 +1174,15 @@ export default async function handler(req, res) {
           error: "Gagal parsing JSON"
         });
       }
+      host = parsed?.host || req.query.host || "Tmpfiles";
       const media = parsed?.file || parsed?.url;
       const urlRegex = /^https?:\/\/[^\s]+$/;
       const base64Regex = /^data:([a-zA-Z0-9/+.-]+);base64,(.+)$/;
-      if (!media) return res.status(400).json({
-        error: "Field file/url kosong"
-      });
+      if (!media) {
+        return res.status(400).json({
+          error: "Field file/url kosong"
+        });
+      }
       if (urlRegex.test(media)) {
         const {
           data
@@ -1237,6 +1235,11 @@ export default async function handler(req, res) {
     }
   } catch (err) {
     console.error("Kesalahan di handler:", err);
+    if (err.message.includes("too large")) {
+      return res.status(413).json({
+        error: `Payload terlalu besar. Batas platform terlampaui. Pesan: ${err.message}`
+      });
+    }
     return res.status(500).json({
       error: `Kesalahan server: ${err.message}`
     });
