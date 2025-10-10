@@ -7,6 +7,7 @@ import {
 } from "axios-cookiejar-support";
 import * as cheerio from "cheerio";
 import SpoofHead from "@/lib/spoof-head";
+import apiConfig from "@/configs/apiConfig";
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 class WudysoftAPI {
   constructor() {

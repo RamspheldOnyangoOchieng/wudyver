@@ -1,5 +1,4 @@
 import axios from "axios";
-import apiConfig from "@/configs/apiConfig";
 import Encoder from "@/lib/encoder";
 class Y2MateDownloader {
   constructor(domain = "random") {

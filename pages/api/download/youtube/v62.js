@@ -1,23 +1,24 @@
 import axios from "axios";
-import https from "https";
+import {
+  CookieJar
+} from "tough-cookie";
+import {
+  wrapper
+} from "axios-cookiejar-support";
 class YouTubeDownloader {
   constructor() {
     this.baseUrl = "https://convert.ytmp3.wf";
     this.validFormats = ["audio", "best_video", "144p", "240p", "360p", "480p", "720p", "1080p", "1440p", "2160p"];
-    const httpsAgent = new https.Agent({
-      keepAlive: true,
-      maxSockets: 10,
-      rejectUnauthorized: false
-    });
-    this.client = axios.create({
-      httpsAgent: httpsAgent,
+    const jar = new CookieJar();
+    this.client = wrapper(axios.create({
+      jar: jar,
       headers: {
         accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "accept-language": "id-ID,id;q=0.9",
         "cache-control": "no-cache",
         pragma: "no-cache",
         priority: "u=0, i",
-        "sec-ch-ua": '"Lemur";v="135", "", "", "Microsoft Edge Simulate";v="135"',
+        "sec-ch-ua": '"Lemur";v="135", "Not.A/Brand";v="8", "Microsoft Edge";v="135"',
         "sec-ch-ua-mobile": "?1",
         "sec-ch-ua-platform": '"Android"',
         "sec-fetch-dest": "iframe",
@@ -28,52 +29,18 @@ class YouTubeDownloader {
         referer: "https://convert.ytmp3.wf/index2"
       },
       timeout: 3e4,
-      maxRedirects: 5
-    });
-    this.cookie = "_ga=GA1.1.653523136.1755764819; PHPSESSID=u3ubf55487r92ffajbnrgm46sk; _ga_4YY9H39BXL=GS2.1.s1755764819$o1$g0$t1755764856$j23$l0$h0";
-    this.client.defaults.headers.common["cookie"] = this.cookie;
-    this.client.interceptors.response.use(response => {
-      const setCookie = response.headers["set-cookie"];
-      if (setCookie) {
-        const newSession = setCookie.find(c => c.includes("PHPSESSID"));
-        if (newSession) {
-          const sessionMatch = newSession.match(/PHPSESSID=([^;]+)/);
-          if (sessionMatch) {
-            this.updateCookie("PHPSESSID", sessionMatch[1]);
-          }
-        }
-        const newGa = setCookie.find(c => c.includes("_ga="));
-        if (newGa) {
-          const gaMatch = newGa.match(/_ga=([^;]+)/);
-          if (gaMatch) {
-            this.updateCookie("_ga", gaMatch[1]);
-          }
-        }
-      }
-      return response;
-    }, error => {
-      if (error.code === "ECONNABORTED") {
-        console.error("Request timeout:", error.message);
-      }
-      return Promise.reject(error);
-    });
-  }
-  updateCookie(name, value) {
-    const cookieRegex = new RegExp(`(^|;\\s*)${name}=[^;]*`);
-    if (this.cookie.match(cookieRegex)) {
-      this.cookie = this.cookie.replace(cookieRegex, `$1${name}=${value}`);
-    } else {
-      this.cookie += `; ${name}=${value}`;
-    }
-    this.client.defaults.headers.common["cookie"] = this.cookie;
+      maxRedirects: 5,
+      withCredentials: true
+    }));
+    this.jar = jar;
   }
   formatHandling(userFormat) {
-    if (this.validFormats.indexOf(userFormat) === -1) {
+    if (!this.validFormats.includes(userFormat)) {
       throw new Error(`Invalid format! Available formats: ${this.validFormats.join(", ")}`);
     }
-    let isVideo = false,
-      quality = null;
-    if (userFormat === "audio") {} else {
+    let isVideo = false;
+    let quality = null;
+    if (userFormat !== "audio") {
       isVideo = true;
       if (userFormat === "best_video") {
         quality = "10000";
@@ -94,10 +61,8 @@ class YouTubeDownloader {
         url: `${this.baseUrl}${path}`,
         headers: {
           ...this.client.defaults.headers,
-          ...additionalHeaders,
-          cookie: this.cookie
+          ...additionalHeaders
         },
-        httpsAgent: this.client.defaults.httpsAgent,
         timeout: 3e4
       };
       if (data && method.toLowerCase() === "post") {

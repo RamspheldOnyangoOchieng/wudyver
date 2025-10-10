@@ -1,5 +1,4 @@
 import fetch from "node-fetch";
-import apiConfig from "@/configs/apiConfig";
 import Encoder from "@/lib/encoder";
 class Ytmp3Converter {
   constructor() {
