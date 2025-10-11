@@ -57,7 +57,7 @@ class WudysoftAPI {
       throw error;
     }
   }
-  async checkMessages(email) {
+  async checkMessagesAimage(email) {
     try {
       const response = await this.client.get("/mails/v9", {
         params: {
@@ -65,14 +65,17 @@ class WudysoftAPI {
           email: email
         }
       });
-      const content = response.data?.data?.[0]?.text_content;
-      if (content) {
-        const match = content.match(/\b\d{6}\b/);
-        return match ? match[0] : null;
+      const messages = response.data?.data || [];
+      for (const message of messages) {
+        const content = message.text_content || message.html_content || "";
+        const verifyMatch = content.match(/https:\/\/aimage\.ai\/api\/auth\/verify-email\?token=([^&\s]+)/);
+        if (verifyMatch) {
+          return verifyMatch[0];
+        }
       }
       return null;
     } catch (error) {
-      console.error(`[ERROR] Gagal dalam 'WudysoftAPI.checkMessages' untuk email ${email}: ${error.message}`);
+      console.error(`[ERROR] Gagal dalam 'WudysoftAPI.checkMessagesAimage' untuk email ${email}: ${error.message}`);
       return null;
     }
   }
@@ -133,27 +136,27 @@ class WudysoftAPI {
     }
   }
 }
-class DreamyY2KAPI {
+class AImageAI {
   constructor() {
     this.cookieJar = new CookieJar();
     this.config = {
       endpoints: {
-        base: "https://dreamyy2k.org/api",
+        base: "https://aimage.ai/api",
         auth: {
-          sendCode: "/auth/send-code",
-          csrf: "/auth/csrf",
-          callback: "/auth/callback/email-code",
-          session: "/auth/session"
+          signUp: "/auth/sign-up/email",
+          verifyEmail: "/auth/verify-email",
+          getSession: "/auth/get-session"
         },
-        user: "/get-user-info",
-        generate: "/image/generate",
-        taskStatus: taskId => `/image/task-status/${taskId}`
-      }
+        generate: "/generate-image",
+        taskStatus: "/task-status"
+      },
+      styles: ["realistic", "anime", "artistic", "cinematic", "fantasy", "minimalist"],
+      sizes: ["1:1", "2:3", "3:2", "16:9", "9:16"]
     };
     const commonHeaders = {
       "accept-language": "id-ID",
-      origin: "https://dreamyy2k.org",
-      referer: "https://dreamyy2k.org/",
+      origin: "https://aimage.ai",
+      referer: "https://aimage.ai/",
       "sec-ch-ua": '"Chromium";v="127", "Not)A;Brand";v="99", "Microsoft Edge Simulate";v="127", "Lemur";v="127"',
       "sec-ch-ua-mobile": "?1",
       "sec-ch-ua-platform": '"Android"',
@@ -177,13 +180,37 @@ class DreamyY2KAPI {
   _random() {
     return Math.random().toString(36).substring(2, 12);
   }
-  async _getSessionFromKey(key) {
+  _generatePassword() {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let password = "";
+    for (let i = 0; i < 8; i++) {
+      password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return password + "A1";
+  }
+  async _convertImageToBase64(imageUrl) {
+    let imageBase64;
+    if (Buffer.isBuffer(imageUrl)) {
+      imageBase64 = `data:image/png;base64,${imageUrl.toString("base64")}`;
+    } else if (imageUrl.startsWith("http")) {
+      const response = await axios.get(imageUrl, {
+        responseType: "arraybuffer"
+      });
+      imageBase64 = `data:image/png;base64,${Buffer.from(response.data).toString("base64")}`;
+    } else if (imageUrl.startsWith("data:")) {
+      imageBase64 = imageUrl;
+    } else {
+      throw new Error("Format imageUrl tidak didukung");
+    }
+    return imageBase64;
+  }
+  async _getTokenFromKey(key) {
     console.log(`Proses: Memuat sesi dari kunci: ${key}`);
     const savedSession = await this.wudysoft.getPaste(key);
     if (!savedSession) throw new Error(`Sesi dengan kunci "${key}" tidak ditemukan.`);
     try {
       const sessionData = JSON.parse(savedSession);
-      if (!sessionData.sessionToken) throw new Error("Token session tidak valid dalam sesi tersimpan.");
+      if (!sessionData.session?.token) throw new Error("Token tidak valid dalam sesi tersimpan.");
       console.log("Proses: Sesi berhasil dimuat.");
       return sessionData;
     } catch (e) {
@@ -191,100 +218,71 @@ class DreamyY2KAPI {
     }
   }
   async _performRegistration() {
-    console.log("\n====== MEMULAI PROSES REGISTRASI DREAMYY2K ======");
-    try {
-      await this.cookieJar.removeAllCookies();
-    } catch (e) {
-      console.log("Tidak ada cookie lama yang perlu dibuang");
-    }
+    console.log("\n====== MEMULAI PROSES REGISTRASI AIMAGE AI ======");
     const email = await this.wudysoft.createEmail();
     if (!email) throw new Error("Gagal membuat email sementara.");
     console.log(`Proses: Email dibuat: ${email}`);
-    console.log("Proses: Mendapatkan CSRF token...");
-    const csrfResponse = await this.api.get(this.config.endpoints.auth.csrf);
-    const csrfToken = csrfResponse.data.csrfToken;
-    if (!csrfToken) throw new Error("Gagal mendapatkan CSRF token.");
-    console.log(`Proses: CSRF token didapat: ${csrfToken.substring(0, 20)}...`);
-    console.log("Proses: Mengirim kode verifikasi...");
-    const sendCodePayload = {
-      email: email
+    const password = this._generatePassword();
+    const name = `User${this._random().substring(0, 6)}`;
+    const signupPayload = {
+      email: email,
+      password: password,
+      name: name,
+      callbackURL: "/"
     };
-    await this.api.post(this.config.endpoints.auth.sendCode, sendCodePayload);
-    console.log("Proses: Kode verifikasi berhasil dikirim, menunggu email...");
-    let verificationCode = null;
+    console.log("Proses: Mendaftarkan akun...");
+    const signupResponse = await this.api.post(this.config.endpoints.auth.signUp, signupPayload);
+    if (signupResponse.status !== 200) {
+      throw new Error(`Gagal mendaftar: ${signupResponse.statusText}`);
+    }
+    console.log("Proses: Pendaftaran berhasil, mencari link verifikasi email...");
+    let verificationLink = null;
     for (let i = 0; i < 60; i++) {
-      verificationCode = await this.wudysoft.checkMessages(email);
-      if (verificationCode) break;
-      console.log(`Proses: Menunggu kode verifikasi... (${i + 1}/60)`);
+      verificationLink = await this.wudysoft.checkMessagesAimage(email);
+      if (verificationLink) break;
+      console.log(`Proses: Menunggu link verifikasi... (${i + 1}/60)`);
       await sleep(3e3);
     }
-    if (!verificationCode) throw new Error("Gagal menemukan kode verifikasi setelah 3 menit.");
-    console.log(`Proses: Kode verifikasi ditemukan: ${verificationCode}`);
-    console.log("Proses: Memverifikasi kode...");
-    const callbackPayload = new URLSearchParams({
-      email: email,
-      code: verificationCode,
-      redirect: "false",
-      csrfToken: csrfToken,
-      callbackUrl: "https://dreamyy2k.org/"
-    }).toString();
-    const callbackResponse = await this.api.post(this.config.endpoints.auth.callback, callbackPayload, {
+    if (!verificationLink) throw new Error("Gagal menemukan link verifikasi setelah 3 menit.");
+    console.log("Proses: Link verifikasi ditemukan:", verificationLink);
+    console.log("Proses: Memverifikasi email...");
+    const verifyResponse = await this.api.get(verificationLink, {
       headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        "x-auth-return-redirect": "1"
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "upgrade-insecure-requests": "1",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "none"
       }
     });
-    console.log("Proses: Verifikasi kode berhasil");
+    if (verifyResponse.status !== 200) {
+      throw new Error(`Gagal verifikasi email: ${verifyResponse.statusText}`);
+    }
     console.log("Proses: Mendapatkan session...");
-    const sessionResponse = await this.api.get(this.config.endpoints.auth.session);
-    const userSession = sessionResponse.data;
-    if (!userSession?.user?.uuid) {
-      throw new Error("Gagal mendapatkan session user.");
+    const sessionResponse = await this.api.get(this.config.endpoints.auth.getSession);
+    if (!sessionResponse.data?.session?.token) {
+      throw new Error("Gagal mendapatkan session setelah verifikasi");
     }
-    console.log(`Proses: Session berhasil didapat untuk user: ${userSession.user.uuid}`);
-    console.log("Proses: Mendapatkan info user...");
-    const userInfoResponse = await this.api.post(this.config.endpoints.user, {}, {
-      headers: {
-        "content-length": "0"
-      }
-    });
-    const userInfo = userInfoResponse.data;
-    if (userInfo.code !== 0) {
-      throw new Error("Gagal mendapatkan info user.");
-    }
-    console.log(`Proses: User info berhasil didapat. Credits: ${userInfo.data.credits.left_credits}`);
-    const dreamyCookies = await this.cookieJar.getCookies("https://dreamyy2k.org");
-    const sessionCookie = dreamyCookies.find(cookie => cookie.key === "__Secure-authjs.session-token");
-    if (!sessionCookie?.value) {
-      throw new Error("Gagal mengekstrak session token dari cookies.");
-    }
-    const sessionData = {
-      sessionToken: sessionCookie.value,
-      userInfo: userInfo.data,
-      email: email,
-      expires: userSession.expires
-    };
-    console.log("\n[SUCCESS] Sesi DreamyY2K berhasil dibuat!");
-    console.log(`[USER] ${userInfo.data.nickname}`);
-    console.log(`[CREDITS] ${userInfo.data.credits.left_credits}`);
-    console.log("\n====== REGISTRASI DREAMYY2K SELESAI ======\n");
-    return sessionData;
+    console.log("\n[SUCCESS] Registrasi AImage AI berhasil!");
+    console.log(`[USER] ${sessionResponse.data.user.name} (${sessionResponse.data.user.email})`);
+    console.log(`[TOKEN] ${sessionResponse.data.session.token.substring(0, 50)}...`);
+    return sessionResponse.data;
   }
   async register() {
     try {
-      console.log("Proses: Mendaftarkan sesi DreamyY2K baru...");
+      console.log("Proses: Mendaftarkan sesi AImage AI baru...");
       const sessionData = await this._performRegistration();
       const sessionToSave = JSON.stringify(sessionData);
-      const sessionTitle = `dreamyy2k-session-${this._random()}`;
+      const sessionTitle = `aimageai-session-${this._random()}`;
       const newKey = await this.wudysoft.createPaste(sessionTitle, sessionToSave);
       if (!newKey) throw new Error("Gagal menyimpan sesi baru.");
-      console.log(`-> Sesi DreamyY2K baru berhasil didaftarkan. Kunci Anda: ${newKey}`);
+      console.log(`-> Sesi AImage AI baru berhasil didaftarkan. Kunci Anda: ${newKey}`);
       return {
         key: newKey,
-        userInfo: sessionData.userInfo
+        user: sessionData.user
       };
     } catch (error) {
-      console.error(`Proses registrasi DreamyY2K gagal: ${error.message}`);
+      console.error(`Proses registrasi AImage AI gagal: ${error.message}`);
       throw error;
     }
   }
@@ -295,7 +293,7 @@ class DreamyY2KAPI {
     let currentKey = key;
     if (key) {
       try {
-        sessionData = await this._getSessionFromKey(key);
+        sessionData = await this._getTokenFromKey(key);
       } catch (error) {
         console.warn(`[PERINGATAN] ${error.message}. Mendaftarkan sesi baru...`);
       }
@@ -306,9 +304,10 @@ class DreamyY2KAPI {
       if (!newSession?.key) throw new Error("Gagal mendaftarkan sesi baru.");
       console.log(`-> PENTING: Simpan kunci baru ini: ${newSession.key}`);
       currentKey = newSession.key;
-      sessionData = await this._getSessionFromKey(currentKey);
+      sessionData = await this._getTokenFromKey(currentKey);
     }
-    await this.cookieJar.setCookie(`__Secure-authjs.session-token=${sessionData.sessionToken}; Domain=dreamyy2k.org; Path=/; Secure; SameSite=Lax`, "https://dreamyy2k.org");
+    const sessionToken = sessionData.session.token;
+    await this.cookieJar.setCookie(`__Secure-better-auth.session_token=${sessionToken}; Domain=.aimage.ai; Path=/; Secure; SameSite=Lax`, "https://aimage.ai");
     return {
       sessionData: sessionData,
       key: currentKey
@@ -316,9 +315,9 @@ class DreamyY2KAPI {
   }
   async list_key() {
     try {
-      console.log("Proses: Mengambil daftar semua kunci sesi DreamyY2K...");
+      console.log("Proses: Mengambil daftar semua kunci sesi AImage AI...");
       const allPastes = await this.wudysoft.listPastes();
-      return allPastes.filter(paste => paste.title && paste.title.startsWith("dreamyy2k-session-")).map(paste => paste.key);
+      return allPastes.filter(paste => paste.title && paste.title.startsWith("aimageai-session-")).map(paste => paste.key);
     } catch (error) {
       console.error("Gagal mengambil daftar kunci:", error.message);
       throw error;
@@ -344,57 +343,63 @@ class DreamyY2KAPI {
   async generate({
     key,
     prompt = PROMPT.text,
-    imageUrl,
-    ratio = "1:1"
+    style = "realistic",
+    size = "2:3",
+    imageUrl = []
   }) {
+    if (!this.config.styles.includes(style)) {
+      throw new Error(`Style "${style}" tidak valid. Pilihan: ${this.config.styles.join(", ")}`);
+    }
+    if (!this.config.sizes.includes(size)) {
+      throw new Error(`Size "${size}" tidak valid. Pilihan: ${this.config.sizes.join(", ")}`);
+    }
     try {
       const {
-        key: currentKey,
-        sessionData
+        key: currentKey
       } = await this._ensureValidSession({
         key: key
       });
-      console.log(`Proses: Membuat gambar dengan DreamyY2K...`);
-      console.log(`Proses: Credits tersedia: ${sessionData.userInfo.credits.left_credits}`);
-      let imageBase64;
-      if (Buffer.isBuffer(imageUrl)) {
-        imageBase64 = `data:image/png;base64,${imageUrl.toString("base64")}`;
-      } else if (imageUrl.startsWith("http")) {
-        const response = await axios.get(imageUrl, {
-          responseType: "arraybuffer"
-        });
-        imageBase64 = `data:image/png;base64,${Buffer.from(response.data).toString("base64")}`;
-      } else if (imageUrl.startsWith("data:")) {
-        imageBase64 = imageUrl;
-      } else {
-        throw new Error("Format imageUrl tidak didukung");
+      console.log(`Proses: Membuat gambar dengan prompt: "${prompt}"`);
+      console.log(`Style: ${style}, Size: ${size}`);
+      const processedReferenceImages = [];
+      if (imageUrl && imageUrl.length > 0) {
+        console.log(`Proses: Mengkonversi ${imageUrl.length} reference image ke base64...`);
+        for (const imageUrl of imageUrl) {
+          try {
+            const imageBase64 = await this._convertImageToBase64(imageUrl);
+            processedReferenceImages.push(imageBase64);
+            console.log(`-> Berhasil mengkonversi image ke base64`);
+          } catch (error) {
+            console.warn(`[PERINGATAN] Gagal mengkonversi image: ${error.message}`);
+          }
+        }
+        console.log(`Proses: ${processedReferenceImages.length} reference image berhasil diproses`);
       }
-      const generatePayload = {
-        image_url: imageBase64,
+      const payload = {
         prompt: prompt,
-        ratio: ratio
+        style: style,
+        size: size,
+        referenceImages: processedReferenceImages
       };
-      console.log("Proses: Mengirim permintaan generate gambar...");
-      const response = await this.api.post(this.config.endpoints.generate, generatePayload);
-      if (response.data.code !== 0) {
-        throw new Error(response.data.message || "Gagal membuat tugas generate");
+      const response = await this.api.post(this.config.endpoints.generate, payload);
+      if (!response.data?.taskId) {
+        throw new Error("Gagal membuat task generate image");
       }
-      console.log("Proses: Tugas generate berhasil dibuat.");
-      console.log(`Proses: Task UUID: ${response.data.data.task_uuid}`);
-      console.log(`Proses: Credits tersisa: ${response.data.data.credits_left}`);
+      console.log("Proses: Task generate image berhasil dibuat.");
+      console.log(`Task ID: ${response.data.taskId}`);
       return {
         ...response.data,
         key: currentKey
       };
     } catch (error) {
       const errorMessage = error.response?.data?.message || error.message;
-      console.error(`Proses generate DreamyY2K gagal: ${errorMessage}`);
+      console.error(`Proses generate image gagal: ${errorMessage}`);
       throw new Error(errorMessage);
     }
   }
   async status({
     key,
-    task_id
+    task_id: taskId
   }) {
     try {
       const {
@@ -402,22 +407,20 @@ class DreamyY2KAPI {
       } = await this._ensureValidSession({
         key: key
       });
-      console.log(`Proses: Mengecek status untuk task_id ${task_id}...`);
-      const response = await this.api.get(this.config.endpoints.taskStatus(task_id));
-      if (response.data.code !== 0) {
-        throw new Error(response.data.message || "Gagal mendapatkan status");
-      }
-      console.log(`Proses: Status: ${response.data.data.status}`);
-      if (response.data.data.status === "completed") {
-        console.log(`Proses: Gambar selesai: ${response.data.data.output_image_url}`);
-      }
+      console.log(`Proses: Mengecek status untuk taskId ${taskId}...`);
+      const response = await this.api.get(this.config.endpoints.taskStatus, {
+        params: {
+          taskId: taskId
+        }
+      });
+      console.log("Proses: Status berhasil didapatkan.");
       return {
         ...response.data,
         key: currentKey
       };
     } catch (error) {
       const errorMessage = error.response?.data?.message || error.message;
-      console.error(`Proses status DreamyY2K gagal: ${errorMessage}`);
+      console.error(`Proses status gagal: ${errorMessage}`);
       throw new Error(errorMessage);
     }
   }
@@ -426,21 +429,17 @@ class DreamyY2KAPI {
   }) {
     try {
       const {
-        sessionData,
-        key: currentKey
+        sessionData
       } = await this._ensureValidSession({
         key: key
       });
       return {
-        code: 0,
-        message: "ok",
-        data: sessionData.userInfo,
-        key: currentKey
+        user: sessionData.user,
+        session: sessionData.session
       };
     } catch (error) {
-      const errorMessage = error.response?.data?.message || error.message;
-      console.error(`Proses user_info DreamyY2K gagal: ${errorMessage}`);
-      throw new Error(errorMessage);
+      console.error(`Gagal mendapatkan info user: ${error.message}`);
+      throw error;
     }
   }
 }
@@ -454,7 +453,7 @@ export default async function handler(req, res) {
       error: "Parameter 'action' wajib diisi."
     });
   }
-  const api = new DreamyY2KAPI();
+  const api = new AImageAI();
   try {
     let response;
     switch (action) {
@@ -462,12 +461,20 @@ export default async function handler(req, res) {
         response = await api.register();
         break;
       case "generate":
-        if (!params.imageUrl) {
+        if (!params.prompt) {
           return res.status(400).json({
-            error: "Parameter 'imageUrl' wajib diisi untuk action 'generate'."
+            error: "Parameter 'prompt' wajib diisi untuk action 'generate'."
           });
         }
         response = await api.generate(params);
+        break;
+      case "status":
+        if (!params.task_id) {
+          return res.status(400).json({
+            error: "Parameter 'task_id' wajib diisi untuk action 'status'."
+          });
+        }
+        response = await api.status(params);
         break;
       case "list_key":
         response = await api.list_key();
@@ -480,25 +487,12 @@ export default async function handler(req, res) {
         }
         response = await api.del_key(params);
         break;
-      case "status":
-        if (!params.key || !params.task_id) {
-          return res.status(400).json({
-            error: "Parameter 'key' dan 'task_id' wajib diisi untuk action 'status'."
-          });
-        }
-        response = await api.status(params);
-        break;
       case "user_info":
-        if (!params.key) {
-          return res.status(400).json({
-            error: "Parameter 'key' wajib diisi untuk action 'user_info'."
-          });
-        }
         response = await api.user_info(params);
         break;
       default:
         return res.status(400).json({
-          error: `Action tidak valid: ${action}. Action yang didukung: 'register', 'generate', 'list_key', 'del_key', 'status', 'user_info'.`
+          error: `Action tidak valid: ${action}. Action yang didukung: 'register', 'generate', 'status', 'list_key', 'del_key', 'user_info'.`
         });
     }
     return res.status(200).json(response);

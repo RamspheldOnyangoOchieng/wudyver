@@ -22,5 +22,5 @@ const listProxy = [{
 }];
 const randomIndex = Math.floor(Math.random() * listProxy.length);
 const randomProxy = listProxy[randomIndex];
-console.log(randomProxy);
+console.log(`Proxy Name: ${randomProxy.name}`);
 export default randomProxy;

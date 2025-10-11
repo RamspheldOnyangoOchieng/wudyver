@@ -419,7 +419,7 @@ class ScreamAI {
       throw new Error(errorMessage);
     }
   }
-  async getUserInfo({
+  async user_info({
     key
   }) {
     try {
@@ -437,7 +437,7 @@ class ScreamAI {
       };
     } catch (error) {
       const errorMessage = error.response?.data?.message || error.message;
-      console.error(`Proses getUserInfo ScreamAI gagal: ${errorMessage}`);
+      console.error(`Proses user_info ScreamAI gagal: ${errorMessage}`);
       throw new Error(errorMessage);
     }
   }
@@ -492,7 +492,7 @@ export default async function handler(req, res) {
             error: "Parameter 'key' wajib diisi untuk action 'user_info'."
           });
         }
-        response = await api.getUserInfo(params);
+        response = await api.user_info(params);
         break;
       default:
         return res.status(400).json({

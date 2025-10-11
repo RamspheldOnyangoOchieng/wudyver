@@ -16,7 +16,7 @@ import * as cheerio from "cheerio";
 import ora from "ora";
 import chalk from "chalk";
 import _ from "lodash";
-import Busboy from "busboy";
+import multer from "multer";
 const referer = "https://krakenfiles.com";
 const uloadUrlRegexStr = /url: "([^"]+)"/;
 const generateSlug = crypto.createHash("md5").update(`${Date.now()}-${uuidv4()}`).digest("hex").substring(0, 8);
@@ -1083,50 +1083,12 @@ export const config = {
     responseLimit: false
   }
 };
-async function parseForm(req) {
-  return new Promise((resolve, reject) => {
-    const busboy = Busboy({
-      headers: req.headers,
-      limits: {}
-    });
-    const fields = {};
-    const chunks = [];
-    let fileName = "unknown_file";
-    let fileBuffer = null;
-    busboy.on("field", (fieldname, val) => {
-      if (fields[fieldname]) {
-        if (!Array.isArray(fields[fieldname])) {
-          fields[fieldname] = [fields[fieldname]];
-        }
-        fields[fieldname].push(val);
-      } else {
-        fields[fieldname] = val;
-      }
-    });
-    busboy.on("file", (fieldname, file, {
-      filename
-    }) => {
-      fileName = filename;
-      file.on("data", data => {
-        chunks.push(data);
-      });
-      file.on("end", () => {
-        fileBuffer = Buffer.concat(chunks);
-      });
-    });
-    busboy.on("finish", () => {
-      resolve({
-        fields: fields,
-        buffer: fileBuffer,
-        fileName: fileName
-      });
-    });
-    busboy.on("error", err => {
-      reject(err);
-    });
-    req.pipe(busboy);
-  });
-}
+const upload = multer({
+  limits: {
+    fileSize: 1024 * 1024 * 1024
+  },
+  storage: multer.memoryStorage()
+});
 export default async function handler(req, res) {
   if (!["GET", "POST"].includes(req.method)) {
     return res.status(405).json({
@@ -1146,20 +1108,25 @@ export default async function handler(req, res) {
     let host;
     const contentType = req.headers["content-type"] || "";
     if (contentType.startsWith("multipart/form-data")) {
-      const {
-        fields,
-        buffer: fileBuffer,
-        fileName: uploadedFileName
-      } = await parseForm(req);
-      if (!fileBuffer) {
+    console.log("multipart upload");
+      await new Promise((resolve, reject) => {
+        upload.single("file")(req, res, err => {
+          if (err) {
+            return reject(err);
+          }
+          resolve();
+        });
+      });
+      if (!req.file) {
         return res.status(400).json({
           error: "Field 'file' kosong."
         });
       }
-      buffer = fileBuffer;
-      fileName = uploadedFileName;
-      host = fields.host || req.query.host || "Tmpfiles";
+      buffer = req.file.buffer;
+      fileName = req.file.originalname;
+      host = req.body.host || req.query.host || "Tmpfiles";
     } else {
+    console.log("raw upload");
       let rawBody = "";
       await new Promise((resolve, reject) => {
         req.on("data", chunk => rawBody += chunk.toString());
