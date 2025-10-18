@@ -11,7 +11,6 @@ import {
 } from "crypto";
 import apiConfig from "@/configs/apiConfig";
 import SpoofHead from "@/lib/spoof-head";
-import FormData from "form-data";
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function base64URLEncode(str) {
@@ -37,6 +36,44 @@ async function logCookies(jar, url, label) {
   } catch (e) {
     console.error(`Gagal membaca cookie untuk ${url}: ${e.message}`);
   }
+}
+async function followRedirects(client, url, headers, maxRedirects = 10) {
+  let currentUrl = url;
+  let redirectCount = 0;
+  while (redirectCount < maxRedirects) {
+    console.log(`\n[REQUEST ${redirectCount + 1}] ${currentUrl}`);
+    let response;
+    try {
+      response = await client.get(currentUrl, {
+        headers: headers,
+        maxRedirects: 0,
+        validateStatus: status => status >= 200 && status < 400
+      });
+    } catch (error) {
+      if (error.response) {
+        response = error.response;
+      } else {
+        throw error;
+      }
+    }
+    console.log(`[RESPONSE ${redirectCount + 1}] Status: ${response.status}`);
+    await logCookies(client.defaults.jar, currentUrl, `after req ${redirectCount + 1}`);
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.location;
+      if (!location) {
+        throw new Error(`Status ${response.status} redirect tanpa header location.`);
+      }
+      const nextUrl = new URL(location, currentUrl);
+      console.log(`[REDIRECT ${redirectCount + 1}] -> ${nextUrl.href}`);
+      currentUrl = nextUrl.href;
+      redirectCount++;
+    } else {
+      return {
+        finalUrl: currentUrl
+      };
+    }
+  }
+  throw new Error(`Terlalu banyak redirect (melebihi ${maxRedirects})`);
 }
 class WudysoftAPI {
   constructor() {
@@ -178,6 +215,8 @@ class Soro2API {
     };
     const commonHeaders = {
       "accept-language": "id-ID",
+      origin: "https://soro2.ai",
+      referer: "https://soro2.ai/",
       "cache-control": "no-cache",
       pragma: "no-cache",
       priority: "u=1, i",
@@ -222,7 +261,20 @@ class Soro2API {
     const email = await this.wudysoft.createEmail();
     if (!email) throw new Error("Gagal membuat email sementara.");
     console.log(`Proses: Email dibuat: ${email}`);
-    await this.api.get(this.config.endpoints.csrf);
+    const browserHeaders = {
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+      "upgrade-insecure-requests": "1",
+      "sec-fetch-dest": "document",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": "none",
+      "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+    };
+    const redirectClient = wrapper(axios.create({
+      jar: this.cookieJar,
+      withCredentials: true
+    }));
+    console.log("\n====== MENGIKUTI REDIRECT CSRF ======");
+    await followRedirects(redirectClient, `${this.config.baseURL}${this.config.endpoints.csrf}`, browserHeaders);
     const cookies = await this.cookieJar.getCookies(this.config.baseURL);
     const csrfCookie = cookies.find(c => c.key === "__Host-authjs.csrf-token");
     if (!csrfCookie) throw new Error("Gagal mendapatkan CSRF token");
@@ -248,11 +300,23 @@ class Soro2API {
       csrfToken: csrfToken,
       callbackUrl: "https://soro2.ai/ai-video/sora2"
     };
-    await this.api.post(this.config.endpoints.callback, new URLSearchParams(verifyPayload));
-    await this.api.get(this.config.endpoints.session);
+    console.log("\n====== MENGIKUTI REDIRECT VERIFY ======");
+    const verifyUrl = `${this.config.baseURL}${this.config.endpoints.callback}`;
+    await followRedirects(redirectClient, verifyUrl, {
+      ...browserHeaders,
+      "content-type": "application/x-www-form-urlencoded"
+    }, {
+      method: "POST",
+      data: new URLSearchParams(verifyPayload)
+    });
+    console.log("\n====== FINAL SESSION CHECK ======");
+    await followRedirects(redirectClient, `${this.config.baseURL}${this.config.endpoints.session}`, browserHeaders);
+    await logCookies(this.cookieJar, this.config.baseURL, "FINAL");
     const sessionCookies = await this.cookieJar.getCookies(this.config.baseURL);
     const sessionTokenCookie = sessionCookies.find(c => c.key === "__Secure-authjs.session-token");
-    if (!sessionTokenCookie) throw new Error("Gagal mendapatkan session token");
+    if (!sessionTokenCookie) {
+      throw new Error("Gagal mendapatkan session token setelah semua redirect.");
+    }
     await this.api.post(this.config.endpoints.userInfo, {}, {
       data: ""
     });
@@ -264,13 +328,17 @@ class Soro2API {
       session_token: sessionTokenCookie.value,
       email: email
     };
+    console.log("\n====== REGISTRASI SELESAI ======\n");
     return sessionData;
   }
   async register() {
     try {
       console.log("Proses: Mendaftarkan sesi baru Soro2.ai...");
       const sessionData = await this._performRegistration();
-      const sessionToSave = JSON.stringify(sessionData);
+      const sessionToSave = JSON.stringify({
+        session_token: sessionData.session_token,
+        email: sessionData.email
+      });
       const sessionTitle = `soro2-session-${this._random()}`;
       const newKey = await this.wudysoft.createPaste(sessionTitle, sessionToSave);
       if (!newKey) throw new Error("Gagal menyimpan sesi baru.");
@@ -297,8 +365,10 @@ class Soro2API {
       }
     }
     if (!sessionData) {
-      console.log("Proses: Kunci tidak valid, mendaftarkan sesi baru...");
+      console.log("Proses: Kunci tidak valid atau tidak disediakan, mendaftarkan sesi baru...");
       const newSession = await this.register();
+      if (!newSession?.key) throw new Error("Gagal mendaftarkan sesi baru.");
+      console.log(`-> PENTING: Simpan kunci baru ini: ${newSession.key}`);
       currentKey = newSession.key;
       sessionData = await this._getTokenFromKey(currentKey);
     }

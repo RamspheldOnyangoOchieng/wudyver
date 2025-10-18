@@ -1,4 +1,5 @@
 import axios from "axios";
+import * as cheerio from "cheerio";
 import {
   wrapper
 } from "axios-cookiejar-support";
@@ -6,6 +7,7 @@ import {
   CookieJar
 } from "tough-cookie";
 import FormData from "form-data";
+
 import SpoofHead from "@/lib/spoof-head";
 import apiConfig from "@/configs/apiConfig";
 const TEMP_MAIL_API = `https://${apiConfig.DOMAIN_URL}/api/mails/v13`;
@@ -44,6 +46,13 @@ class NanoBanana {
     }
     console.log(`-------------------------------------------`);
   }
+  extractOTP(html) {
+    if (!html) return null;
+    const $ = cheerio.load(html);
+    const fullText = $("body").text().trim();
+    const otpMatch = fullText.match(/(\b\d{6}\b)/);
+    return otpMatch ? otpMatch[1] : null;
+  }
   async _authenticate() {
     if (this.isInitialized) return;
     try {
@@ -64,7 +73,7 @@ class NanoBanana {
       console.log("⏳ Memeriksa OTP (polling)...");
       for (let i = 0; i < 60; i++) {
         const otpResponse = await this.client.get(`${TEMP_MAIL_API}?action=message&email=${email}`);
-        otp = otpResponse.data?.data?.rows?.[0]?.html?.match(/:[\s\r\n]*(\d{6})/)?.[1];
+        otp = this.extractOTP(otpResponse.data?.data?.rows?.[0]?.html);
         if (otp) {
           console.log(`\n✅ OTP ditemukan: ${otp}`);
           break;
@@ -152,26 +161,57 @@ class NanoBanana {
     if (!prompt) throw new Error('Parameter "prompt" diperlukan.');
     await this._authenticate();
     const type = imageUrl ? "image-to-image" : "text-to-image";
-    console.log(`🚀 Memulai tugas: ${type}`);
-    const payload = {
-      type: type,
-      prompt: prompt,
-      num_images: num_images,
-      ...rest
-    };
-    if (imageUrl) {
-      const imageUrls = Array.isArray(imageUrl) ? imageUrl : [imageUrl];
-      const uploadedUrls = [];
-      console.log(`Mengunggah ${imageUrls.length} gambar secara berurutan...`);
-      for (const url of imageUrls) {
-        const uploadedUrl = await this._upload(url);
-        uploadedUrls.push(uploadedUrl);
+    console.log(`🚀 Memulai tugas: ${type} (${num_images} gambar)`);
+    
+    const allResults = [];
+    
+    // Loop for of untuk generate sesuai num_images
+    for (const [index, _] of Array.from({
+      length: num_images
+    }).entries()) {
+      console.log(`\n📸 Generate ke-${index + 1}/${num_images}`);
+      
+      const payload = {
+        type: type,
+        prompt: prompt,
+        num_images: 1, // Set ke 1 per request untuk kontrol yang lebih baik
+        ...rest
+      };
+      
+      if (imageUrl) {
+        const imageUrls = Array.isArray(imageUrl) ? imageUrl : [imageUrl];
+        const uploadedUrls = [];
+        console.log(`Mengunggah ${imageUrls.length} gambar...`);
+        for (const url of imageUrls) {
+          const uploadedUrl = await this._upload(url);
+          uploadedUrls.push(uploadedUrl);
+        }
+        payload.image_urls = uploadedUrls;
+        console.log("✅ Semua gambar berhasil diunggah.");
       }
-      payload.image_urls = uploadedUrls;
-      console.log("Semua gambar berhasil diunggah.");
+      
+      const taskId = await this._submit(payload);
+      const result = await this._polling(taskId);
+      allResults.push({
+        index: index + 1,
+        taskId: taskId,
+        ...result
+      });
+      
+      console.log(`✅ Generate ke-${index + 1} selesai!`);
+      
+      // Delay antar request untuk menghindari rate limit
+      if (index < num_images - 1) {
+        console.log("⏳ Menunggu 2 detik sebelum request berikutnya...");
+        await delay(2000);
+      }
     }
-    const taskId = await this._submit(payload);
-    return await this._polling(taskId);
+    
+    console.log(`\n🎉 SEMUA ${num_images} GAMBAR BERHASIL DIGENERATE!`);
+    return {
+      total: num_images,
+      results: allResults
+    };
   }
   async _upload(imageUrl) {
     console.log("⏳ Mengunggah gambar...");
@@ -229,8 +269,8 @@ export default async function handler(req, res) {
     });
   }
   try {
-    const banana = new NanoBanana();
-    const response = await banana.generate(params);
+    const api = new NanoBanana();
+    const response = await api.generate(params);
     return res.status(200).json(response);
   } catch (error) {
     res.status(500).json({

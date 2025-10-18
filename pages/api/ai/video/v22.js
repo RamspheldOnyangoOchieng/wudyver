@@ -1,4 +1,5 @@
 import axios from "axios";
+import * as cheerio from "cheerio";
 import {
   wrapper
 } from "axios-cookiejar-support";
@@ -37,6 +38,13 @@ class NanoBananaSora2 {
     }));
     this.isInitialized = false;
   }
+  extractOTP(html) {
+    if (!html) return null;
+    const $ = cheerio.load(html);
+    const fullText = $("body").text().trim();
+    const otpMatch = fullText.match(/(\b\d{6}\b)/);
+    return otpMatch ? otpMatch[1] : null;
+  }
   async _logCookies(step) {
     console.log(`--- 🍪 LOG COOKIE PADA LANGKAH: ${step} ---`);
     const cookies = await this.cookieJar.getCookies(BASE_URL);
@@ -67,7 +75,7 @@ class NanoBananaSora2 {
       console.log("⏳ Memeriksa OTP (polling)...");
       for (let i = 0; i < 60; i++) {
         const otpResponse = await this.client.get(`${TEMP_MAIL_API}?action=message&email=${email}`);
-        otp = otpResponse.data?.data?.rows?.[0]?.html?.match(/:[\s\r\n]*(\d{6})/)?.[1];
+        otp = this.extractOTP(otpResponse.data?.data?.rows?.[0]?.html);
         if (otp) {
           console.log(`\n✅ OTP ditemukan: ${otp}`);
           break;
@@ -147,58 +155,94 @@ class NanoBananaSora2 {
     console.log(`👤 Login sebagai: ${res.data.data.email}`);
   }
   async _upload(imageUrl) {
-    console.log("⏳ Mengunggah gambar...");
-    let fileBuffer;
-    if (Buffer.isBuffer(imageUrl)) {
-      fileBuffer = imageUrl;
-    } else if (typeof imageUrl === "string" && imageUrl.startsWith("http")) {
-      const res = await this.client.get(imageUrl, {
-        responseType: "arraybuffer"
+    console.log("⏳ Mengunduh dan mengunggah gambar dari URL...");
+    if (typeof imageUrl !== "string" || !imageUrl.startsWith("http")) {
+      throw new Error("imageUrl harus berupa URL gambar yang valid (http/https)");
+    }
+    try {
+      console.log(`📥 Mengunduh: ${imageUrl}`);
+      const response = await axios.get(imageUrl, {
+        responseType: "arraybuffer",
+        timeout: 3e4,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
       });
-      fileBuffer = Buffer.from(res.data);
-    } else if (typeof imageUrl === "string") {
-      fileBuffer = Buffer.from(imageUrl, "base64");
-    } else {
-      throw new Error("Format imageUrl tidak didukung.");
+      const fileBuffer = Buffer.from(response.data);
+      console.log(`📦 Ukuran buffer: ${(fileBuffer.length / 1024).toFixed(1)} KB`);
+      const url = new URL(imageUrl);
+      let filename = `image_${Date.now()}.jpg`;
+      let contentType = "image/jpeg";
+      if (url.pathname.endsWith(".png")) {
+        filename = `image_${Date.now()}.png`;
+        contentType = "image/png";
+      } else if (url.pathname.endsWith(".webp")) {
+        filename = `image_${Date.now()}.webp`;
+        contentType = "image/webp";
+      }
+      console.log(`⬆️  Mengunggah sebagai: ${filename}`);
+      const form = new FormData();
+      form.append("file", fileBuffer, {
+        filename: filename,
+        contentType: contentType
+      });
+      const uploadResponse = await this.client.post(`${BASE_URL}/api/upload`, form, {
+        headers: {
+          ...form.getHeaders(),
+          "Content-Length": form.getLengthSync()
+        },
+        timeout: 6e4
+      });
+      if (!uploadResponse.data?.success || !uploadResponse.data.url) {
+        throw new Error(`Upload gagal: ${JSON.stringify(uploadResponse.data)}`);
+      }
+      console.log("✅ Gambar berhasil diunggah:", uploadResponse.data.url);
+      return uploadResponse.data.url;
+    } catch (error) {
+      console.error("❌ Error upload:", error.message);
+      if (error.code === "ECONNABORTED") {
+        throw new Error(`Timeout: ${error.message}`);
+      } else if (error.response) {
+        throw new Error(`Server error ${error.response.status}: ${JSON.stringify(error.response.data)}`);
+      }
+      throw new Error(`Gagal upload gambar: ${error.message}`);
     }
-    const form = new FormData();
-    form.append("file", fileBuffer, {
-      filename: "image.png"
-    });
-    const res = await this.client.post(`${BASE_URL}/api/upload`, form, {
-      headers: form.getHeaders()
-    });
-    if (!res.data?.success || !res.data.url) {
-      throw new Error("Gagal mengunggah gambar.");
-    }
-    console.log("✅ Gambar berhasil diunggah:", res.data.url);
-    return res.data.url;
   }
-  async create(params) {
+  async generate(params) {
     const {
       prompt,
-      imageUrl = [],
+      imageUrl,
       aspect_ratio = "portrait",
       remove_watermark = true,
       model = "sora2",
-      type = "image-to-video"
+      type = "text-to-video"
     } = params;
     if (!prompt) throw new Error('Parameter "prompt" diperlukan.');
-    if (!imageUrl || imageUrl.length === 0) throw new Error('Parameter "imageUrl" diperlukan untuk Sora2.');
     await this._authenticate();
-    console.log(`🚀 Memulai tugas Sora2: ${type}`);
-    const uploadedUrls = [];
-    console.log(`Mengunggah ${imageUrl.length} gambar secara berurutan...`);
-    for (const url of imageUrl) {
-      const uploadedUrl = await this._upload(url);
-      uploadedUrls.push(uploadedUrl);
+    const isImageToVideo = imageUrl && (Array.isArray(imageUrl) ? imageUrl.length > 0 : imageUrl.trim() !== "");
+    const finalType = isImageToVideo ? "image-to-video" : "text-to-video";
+    console.log(`🚀 Memulai tugas Sora2: **${finalType.toUpperCase()}**`);
+    console.log(`📝 Prompt: ${prompt}`);
+    let uploadedUrls = [];
+    if (isImageToVideo) {
+      console.log(`🖼️  Mengunggah ${Array.isArray(imageUrl) ? imageUrl.length : 1} gambar...`);
+      const imageUrls = Array.isArray(imageUrl) ? imageUrl : [imageUrl];
+      for (let i = 0; i < imageUrls.length; i++) {
+        console.log(`\n--- Gambar ${i + 1}/${imageUrls.length} ---`);
+        const uploadedUrl = await this._upload(imageUrls[i]);
+        uploadedUrls.push(uploadedUrl);
+      }
+      console.log("\n✅ Semua gambar berhasil diunggah.");
+    } else {
+      console.log("✅ Mode Text-to-Video: Tidak perlu upload gambar.");
     }
-    console.log("Semua gambar berhasil diunggah.");
     const payload = {
       model: model,
-      type: type,
+      type: finalType,
       prompt: prompt,
-      image_urls: uploadedUrls,
+      ...isImageToVideo && {
+        image_urls: uploadedUrls
+      },
       aspect_ratio: aspect_ratio,
       remove_watermark: remove_watermark
     };
@@ -220,8 +264,9 @@ class NanoBananaSora2 {
     return {
       task_id: res.data.task_id,
       status: "submitted",
+      type: payload.type,
       remaining_credits: this.credits,
-      message: "Task successfully submitted"
+      message: `Task ${payload.type} successfully submitted`
     };
   }
   async status(params) {
@@ -255,22 +300,17 @@ export default async function handler(req, res) {
       error: "Action is required."
     });
   }
-  const generator = new NanoBananaSora2();
+  const api = new NanoBananaSora2();
   try {
     let response;
     switch (action) {
-      case "create":
+      case "generate":
         if (!params.prompt) {
           return res.status(400).json({
-            error: "Prompt is required for create."
+            error: "Prompt is required for generate."
           });
         }
-        if (!params.imageUrl || params.imageUrl.length === 0) {
-          return res.status(400).json({
-            error: "imageUrl are required for create."
-          });
-        }
-        response = await generator.create(params);
+        response = await api.generate(params);
         return res.status(200).json(response);
       case "status":
         if (!params.task_id) {
@@ -278,11 +318,11 @@ export default async function handler(req, res) {
             error: "task_id is required for status."
           });
         }
-        response = await generator.status(params);
+        response = await api.status(params);
         return res.status(200).json(response);
       default:
         return res.status(400).json({
-          error: `Invalid action: ${action}. Supported actions are 'create', and 'status'.`
+          error: `Invalid action: ${action}. Supported actions are 'generate', and 'status'.`
         });
     }
   } catch (error) {

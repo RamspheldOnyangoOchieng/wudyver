@@ -41,7 +41,7 @@ class AxiosClient {
   getHosts() {
     return this.baseUrls;
   }
-  async fetchData(queryHost = 1, url) {
+  async fetchData(queryHost = 23, url) {
     const baseUrl = this.baseUrls[queryHost] || this.baseUrls[1];
     if (!baseUrl) throw new Error("Invalid host query");
     try {
@@ -64,7 +64,7 @@ export default async function handler(req, res) {
   }
   const client = new AxiosClient();
   try {
-    const result = await client.fetchData(host || 1, url);
+    const result = await client.fetchData(host || 23, url);
     res.setHeader("Content-Type", "text/html");
     return res.status(200).send(result);
   } catch (error) {
