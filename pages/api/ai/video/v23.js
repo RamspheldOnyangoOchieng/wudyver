@@ -291,7 +291,7 @@ class SoraVideo {
       if (!tsk) throw new Error("No task ID received");
       console.log(`Task created: ${tsk}`);
       return {
-        task_id: tsk
+        task_id: tsk?.replace("sora-2:", "")
       };
     } catch (e) {
       console.error("Generation failed:", e.message);
@@ -304,7 +304,7 @@ class SoraVideo {
   }) {
     try {
       console.log(`Checking status for ${task_id}`);
-      const ds = JSON.stringify([task_id]);
+      const ds = JSON.stringify([`sora-2:${task_id}`]);
       console.log("Sending status request");
       const res = await this.axiosInstance.post(this.config.endpoint, ds, {
         headers: this.buildHeader("7f19b44cadf964c6497251f7dbb02e01c93d256a4e", "%5B%22%22%2C%7B%22children%22%3A%5B%5B%22locale%22%2C%22en%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22video%22%2C%7B%22children%22%3A%5B%5B%22casePage%22%2C%22sora%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2C%22%2Fvideo%2Fsora%22%2C%22refresh%22%5D%7D%5D%7D%5D%7D%5D%7D%2Cnull%2Cnull%2Ctrue%5D")
