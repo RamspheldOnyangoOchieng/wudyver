@@ -1,7 +1,32 @@
+import {
+  EventSource
+} from "eventsource";
 import axios from "axios";
 class NSFWImageGenerator {
   constructor() {
     this._style = ["anime", "real", "photo"];
+  }
+  async process(baseUrl, sessionHash) {
+    return new Promise((resolve, reject) => {
+      const eventSourceUrl = `${baseUrl}/gradio_api/queue/data?session_hash=${sessionHash}`;
+      const eventSource = new EventSource(eventSourceUrl);
+      eventSource.onmessage = event => {
+        const eventData = JSON.parse(event.data);
+        const msg = eventData.msg || "status_update";
+        console.log(`Menerima stream: ${msg}`);
+        if (eventData.msg === "process_completed") {
+          console.log("Proses selesai.");
+          eventSource.close();
+          console.log("Koneksi stream ditutup.");
+          resolve(eventData.output);
+        }
+      };
+      eventSource.onerror = error => {
+        console.error("Terjadi error pada EventSource:", error);
+        eventSource.close();
+        reject(new Error("Koneksi stream gagal atau terputus."));
+      };
+    });
   }
   async generateImage(prompt, options = {}) {
     const {
@@ -28,20 +53,11 @@ class NSFWImageGenerator {
         trigger_id: 16,
         session_hash: session_hash
       });
-      const {
-        data
-      } = await axios.get(`${baseUrl}/gradio_api/queue/data?session_hash=${session_hash}`);
-      let result;
-      const lines = data.split("\n\n");
-      for (const line of lines) {
-        if (line.startsWith("data:")) {
-          const d = JSON.parse(line.substring(6));
-          if (d.msg === "process_completed") result = d.output.data[0].url;
-        }
-      }
-      return result;
+      const output = await this.process(baseUrl, session_hash);
+      return output;
     } catch (error) {
-      throw new Error(error.message);
+      console.error("Gagal melakukan request:", error.message);
+      throw new Error(`Request gagal: ${error.message}`);
     }
   }
   async generate({
@@ -51,10 +67,7 @@ class NSFWImageGenerator {
     if (!prompt) {
       throw new Error("Prompt is required for image generation.");
     }
-    const imageUrl = await this.generateImage(prompt, options);
-    return {
-      result: imageUrl
-    };
+    return await this.generateImage(prompt, options);
   }
 }
 export default async function handler(req, res) {
@@ -69,8 +82,9 @@ export default async function handler(req, res) {
     const data = await generator.generate(params);
     return res.status(200).json(data);
   } catch (error) {
+    console.error(error);
     res.status(500).json({
-      error: "Internal Server Error"
+      error: error.message || "Internal Server Error"
     });
   }
 }

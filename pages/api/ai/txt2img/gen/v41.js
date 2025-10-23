@@ -65,6 +65,7 @@ export default async function handler(req, res) {
     const response = await api.generate(params);
     return res.status(200).json(response);
   } catch (error) {
+    console.error(error);
     res.status(500).json({
       error: error.message || "Internal Server Error"
     });

@@ -1,9 +1,9 @@
 import axios from "axios";
-class MFDownloader {
+class MFetcher {
   constructor() {
-    this.api = "https://www.mediafire.com/api/1.4";
+    this.api = "https://www.mediafire.com/api/1.5";
   }
-  async fetch({
+  async download({
     url
   }) {
     try {
@@ -71,16 +71,16 @@ export default async function handler(req, res) {
   const params = req.method === "GET" ? req.query : req.body;
   if (!params.url) {
     return res.status(400).json({
-      error: "Url are required"
+      error: "Parameter 'url' dibutuhkan."
     });
   }
   try {
-    const mf = new MFDownloader();
-    const response = await mf.fetch(params);
+    const api = new MFetcher();
+    const response = await api.download(params);
     return res.status(200).json(response);
   } catch (error) {
     res.status(500).json({
-      error: error.message || "Internal Server Error"
+      error: error.message || "Terjadi kesalahan internal pada server."
     });
   }
 }
