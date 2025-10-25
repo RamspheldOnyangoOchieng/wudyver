@@ -159,8 +159,8 @@ class MusicGenerator {
       const song = data.data.result[0];
       return {
         ...song,
-        audio_url: song.status === 0 ? this.decrypt(song.audio_url || "") : song.audio_url,
-        cover_url: song.status === 0 ? this.decrypt(song.cover_url || "") : song.cover_url
+        audio_url: song.audio_url ? this.decrypt(song.audio_url) : song.audio_url,
+        cover_url: song.cover_url ? this.decrypt(song.cover_url) : song.cover_url
       };
     } catch (error) {
       return {
@@ -224,7 +224,7 @@ class MusicGenerator {
         const result = await this.checkSingleStatus(id, auth);
         results.push(result);
       }
-      const completed = results.filter(r => r.status === 0);
+      const completed = results.filter(r => r.audio_url && r.audio_url.trim() !== "");
       console.log(`[STATUS] Done: ${completed.length}/${results.length} completed.`);
       return {
         results: results,
