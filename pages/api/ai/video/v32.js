@@ -1,5 +1,6 @@
 import fetch from "node-fetch";
 import CryptoJS from "crypto-js";
+import apiConfig from "@/configs/apiConfig";
 class VideoAPI {
   constructor() {
     this.baseConfig = {
@@ -11,9 +12,17 @@ class VideoAPI {
         apiKey: "5f9a4bd59e9d6881772eccc6c29db164342cc65a3452ed372970afba80545ccb"
       },
       "302ai": {
-        apiKey: "sk-edt1IAghrAOSZUPS9xW4ShmS5nxmiCnacAqYC76VrvCrAzg9"
+        apiKey: this.decode("U2FsdGVkX18X2u4ytWKJn26jLo3LXxoJV5pm+5QqOz+2C1+IS6IV+rIwM5IaU934VSGRczrNzFuU5+4Mo2zXJT7Lx46/jKlbMekUUwXlzz8=")
       }
     };
+  }
+  decode(teksTerenkripsi) {
+    const bytes = CryptoJS.AES.decrypt(teksTerenkripsi, apiConfig.PASSWORD);
+    const teksAsli = bytes.toString(CryptoJS.enc.Utf8);
+    if (!teksAsli) {
+        throw new Error("Dekripsi gagal: kunci salah atau data rusak");
+    }
+    return teksAsli;
   }
   getAvailableProviders() {
     return [{

@@ -1,4 +1,6 @@
 import fetch from "node-fetch";
+import CryptoJS from "crypto-js";
+import apiConfig from "@/configs/apiConfig";
 import {
   Agent as HttpsAgent
 } from "https";
@@ -22,16 +24,17 @@ class Api302Service {
       defaultHeaders: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: "Bearer " + this.decode("c2stWVpoak9pNTl0MVNvNnVWS1RFSE95ZnhmMXNWekl6ZHphSTg5UndIQk5HbkZHSUVw")
+        Authorization: "Bearer " + this.decode("U2FsdGVkX1+oADOV0/Yem9pF6n0/yFKuAgEKlHywgT7VoJ3C8X7/1kdCXOXvkQ9vkk+rTNIMMBXqvPC6QYCAXoTL3OUVNuNDcjAVh2DUlqw=")
       }
     };
   }
-  decode(str) {
-    try {
-      return JSON.parse(Buffer.from(str, "base64").toString());
-    } catch {
-      return Buffer.from(str, "base64").toString();
+  decode(teksTerenkripsi) {
+    const bytes = CryptoJS.AES.decrypt(teksTerenkripsi, apiConfig.PASSWORD);
+    const teksAsli = bytes.toString(CryptoJS.enc.Utf8);
+    if (!teksAsli) {
+        throw new Error("Dekripsi gagal: kunci salah atau data rusak");
     }
+    return teksAsli;
   }
   async _attemptReq(params, attempt = 1) {
     const {
