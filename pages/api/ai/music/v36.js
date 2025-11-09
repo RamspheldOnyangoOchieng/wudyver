@@ -10,10 +10,7 @@ const httpsAgent = new HttpsAgent({
 const MAX_ATTEMPTS = 3;
 
 function getAgent(url) {
-  if (url.startsWith("https")) {
-    return httpsAgent;
-  }
-  return null;
+  return url.startsWith("https") ? httpsAgent : null;
 }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 class Api302Service {
@@ -24,15 +21,22 @@ class Api302Service {
       defaultHeaders: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: "Bearer " + this.decode("U2FsdGVkX1+oADOV0/Yem9pF6n0/yFKuAgEKlHywgT7VoJ3C8X7/1kdCXOXvkQ9vkk+rTNIMMBXqvPC6QYCAXoTL3OUVNuNDcjAVh2DUlqw=")
+        Authorization: "Bearer " + this.decode(this.randomSelect(["U2FsdGVkX1+oADOV0/Yem9pF6n0/yFKuAgEKlHywgT7VoJ3C8X7/1kdCXOXvkQ9vkk+rTNIMMBXqvPC6QYCAXoTL3OUVNuNDcjAVh2DUlqw=", "U2FsdGVkX18X2u4ytWKJn26jLo3LXxoJV5pm+5QqOz+2C1+IS6IV+rIwM5IaU934VSGRczrNzFuU5+4Mo2zXJT7Lx46/jKlbMekUUwXlzz8="]))
       }
     };
+  }
+  randomSelect(apiKeys) {
+    if (!apiKeys || apiKeys.length === 0) {
+      return null;
+    }
+    const randomIndex = Math.floor(Math.random() * apiKeys.length);
+    return apiKeys[randomIndex];
   }
   decode(teksTerenkripsi) {
     const bytes = CryptoJS.AES.decrypt(teksTerenkripsi, apiConfig.PASSWORD);
     const teksAsli = bytes.toString(CryptoJS.enc.Utf8);
     if (!teksAsli) {
-        throw new Error("Dekripsi gagal: kunci salah atau data rusak");
+      throw new Error("Dekripsi gagal: kunci salah atau data rusak");
     }
     return teksAsli;
   }
@@ -42,8 +46,7 @@ class Api302Service {
       method
     } = params;
     const url = `${this.config.endpoint}${this.config.basePath}${path}`;
-    let response;
-    let responseText;
+    let response, responseText;
     try {
       const options = {
         method: method,
@@ -56,35 +59,35 @@ class Api302Service {
       if (params.data && (method === "POST" || method === "PUT")) {
         options.body = JSON.stringify(params.data);
       }
-      console.log(`[API_REQ] (Attempt ${attempt}/${MAX_ATTEMPTS}) 🌐 ${method} ${url}`);
+      console.log(`[API_REQ] (Attempt ${attempt}/${MAX_ATTEMPTS}) ${method} ${url}`);
       response = await fetch(url, options);
       responseText = await response.text();
-      console.log(`[API_RES] 📡 Status: ${response.status} for ${path}`);
+      console.log(`[API_RES] Status: ${response.status} for ${path}`);
       if (!response.ok) {
-        if (response.status >= 500 && response.status < 600 && attempt < MAX_ATTEMPTS) {
-          console.warn(`[RETRY] Status ${response.status}. Retrying in ${attempt * 1}s...`);
+        if (response.status >= 500 && attempt < MAX_ATTEMPTS) {
+          console.warn(`[RETRY] Server error ${response.status}. Retrying in ${attempt}s...`);
           await sleep(attempt * 1e3);
           return await this._attemptReq(params, attempt + 1);
         }
         throw new Error(`HTTP ${response.status}: ${responseText}`);
       }
-      let result = {};
       try {
-        result = JSON.parse(responseText);
+        return JSON.parse(responseText);
       } catch (e) {
-        console.warn(`[API_WARN] Response OK, but not valid JSON for ${path}. Body: ${responseText.substring(0, 50)}...`);
+        console.warn(`[API_WARN] Non-JSON response: ${responseText.substring(0, 50)}...`);
+        return {
+          raw: responseText
+        };
       }
-      return result;
     } catch (error) {
-      const isNetworkError = !response || response && (error.message.includes("fetch") || error.message.includes("ECONN") || error.message.includes("EHOST"));
+      const isNetworkError = !response || /fetch|ECONN|EHOST/.test(error.message);
       if (isNetworkError && attempt < MAX_ATTEMPTS) {
-        console.warn(`[RETRY] Network Error: ${error.message}. Retrying in ${attempt * 1}s...`);
+        console.warn(`[RETRY] Network error. Retrying in ${attempt}s...`);
         await sleep(attempt * 1e3);
-        return this._attemptReq(params, attempt + 1);
+        return await this._attemptReq(params, attempt + 1);
       }
-      const errorMessage = error.message.includes("HTTP") ? error.message : `Network Error: ${error.message}`;
-      console.error(`[API_FAIL] ❌ Request failed (Final attempt) for ${path}: ${errorMessage}`);
-      throw new Error(`Request to ${url} failed: ${error.message}`);
+      console.error(`[API_FAIL] Final failure for ${path}: ${error.message}`);
+      throw error;
     }
   }
   async _req(params) {
@@ -95,101 +98,93 @@ class Api302Service {
     continue: isContinue = false,
     ...rest
   }) {
-    try {
-      const path = "/submit/music";
-      let data = {
-        mv: "chirp-v3-5",
-        make_instrumental: false,
-        ...rest
+    const path = "/submit/music";
+    let data = {};
+    let logMsg = "";
+    if (isContinue) {
+      const {
+        taskId,
+        continueClipId,
+        prompt,
+        tags,
+        title,
+        continueAt = 0
+      } = rest;
+      data = {
+        task_id: taskId,
+        continue_clip_id: continueClipId,
+        prompt: prompt,
+        tags: tags,
+        title: title,
+        continue_at: continueAt,
+        mv: rest.mv || "chirp-crow"
       };
-      let logMsg = "";
-      if (isContinue) {
-        const {
-          taskId,
-          continueClipId,
-          prompt,
-          tags,
-          title,
-          continueAt = 0
-        } = rest;
-        data = {
-          ...data,
-          prompt: prompt,
-          tags: tags,
-          title: title,
-          task_id: taskId,
-          continue_clip_id: continueClipId,
-          continue_at: continueAt
-        };
-        logMsg = `⏩ Continuing song: "${title}" (Task ID: ${taskId})`;
-      } else if (custom) {
-        const {
-          prompt,
-          tags,
-          title,
-          makeInstrumental = false
-        } = rest;
-        data = {
-          ...data,
-          prompt: prompt,
-          tags: tags,
-          title: title,
-          make_instrumental: makeInstrumental
-        };
-        logMsg = `🎼 Generating custom music: "${title}"`;
-      } else {
-        const {
-          prompt,
-          makeInstrumental = false
-        } = rest;
-        data = {
-          ...data,
-          gpt_description_prompt: prompt,
-          make_instrumental: makeInstrumental
-        };
-        logMsg = `🎵 Generating automatic music: "${prompt.substring(0, 30)}..."`;
-      }
-      console.log(`[PROCESS] ${logMsg}`);
-      return await this._req({
-        method: "POST",
-        path: path,
-        data: data
-      });
-    } catch (error) {
-      console.error(`[ERROR] ❌ Failed to generate music: ${error.message}`);
-      throw error;
+      logMsg = `Continuing song: "${title}" (Task: ${taskId})`;
+    } else if (custom) {
+      const {
+        prompt,
+        tags = "rap",
+        title,
+        make_instrumental = false,
+        metadata = {}
+      } = rest;
+      data = {
+        prompt: prompt,
+        tags: tags,
+        title: title,
+        mv: rest.mv || "chirp-crow",
+        make_instrumental: make_instrumental,
+        metadata: {
+          create_mode: "custom",
+          vocal_gender: metadata.vocal_gender || "f",
+          control_sliders: metadata.control_sliders || {
+            style_weight: .87,
+            weirdness_constraint: .75
+          },
+          can_control_sliders: metadata.can_control_sliders || ["style_weight", "weirdness_constraint"],
+          ...metadata
+        }
+      };
+      logMsg = `Generating CUSTOM music: "${title}"`;
+    } else {
+      const {
+        gpt_description_prompt,
+        make_instrumental = false
+      } = rest;
+      data = {
+        gpt_description_prompt: gpt_description_prompt,
+        mv: rest.mv || "chirp-crow",
+        make_instrumental: make_instrumental
+      };
+      logMsg = `Generating AUTO music from prompt: "${gpt_description_prompt}"`;
     }
+    console.log(`[PROCESS] ${logMsg}`);
+    return await this._req({
+      method: "POST",
+      path: path,
+      data: data
+    });
   }
   async status({
     task_id
   }) {
-    try {
-      console.log(`[PROCESS] 🔍 Fetching status for task: ${task_id}`);
-      return await this._req({
-        method: "GET",
-        path: `/fetch/${task_id}`
-      });
-    } catch (error) {
-      console.error(`[ERROR] ❌ Failed to fetch task status ${task_id}: ${error.message}`);
-      throw error;
-    }
+    console.log(`[PROCESS] Fetching status for task: ${task_id}`);
+    return await this._req({
+      method: "GET",
+      path: `/fetch/${task_id}`
+    });
   }
   async lyrics({
     prompt
   }) {
-    try {
-      console.log(`[PROCESS] 📝 Generating lyrics with prompt: "${prompt}"`);
-      return await this._req({
-        method: "POST",
-        path: "/submit/lyrics",
-        data: {
-          prompt: prompt
-        }
-      });
-    } catch (error) {
-      console.error(`[ERROR] ❌ Failed to generate lyrics: ${error.message}`);
-      throw error;
-    }
+    console.log(`[PROCESS] Generating lyrics for prompt: "${prompt}"`);
+    return await this._req({
+      method: "POST",
+      path: "/submit/lyrics",
+      data: {
+        prompt: prompt
+      }
+    });
   }
 }
 export default async function handler(req, res) {
@@ -199,7 +194,7 @@ export default async function handler(req, res) {
   } = req.method === "GET" ? req.query : req.body;
   if (!action) {
     return res.status(400).json({
-      error: "Paramenter 'action' wajib diisi."
+      error: "Parameter 'action' wajib diisi."
     });
   }
   const api = new Api302Service();
@@ -207,9 +202,9 @@ export default async function handler(req, res) {
     let result;
     switch (action) {
       case "generate":
-        if (!params.prompt && !params.lyrics) {
+        if (!params.prompt && !params.gpt_description_prompt && !params.lyrics) {
           return res.status(400).json({
-            error: "Paramenter 'prompt', atau 'lyrics' wajib diisi."
+            error: "Salah satu dari 'prompt', 'gpt_description_prompt', atau 'lyrics' wajib diisi."
           });
         }
         result = await api.generate(params);
@@ -217,7 +212,7 @@ export default async function handler(req, res) {
       case "status":
         if (!params.task_id) {
           return res.status(400).json({
-            error: "Paramenter 'task_id' wajib diisi."
+            error: "Parameter 'task_id' wajib diisi."
           });
         }
         result = await api.status(params);
@@ -225,14 +220,14 @@ export default async function handler(req, res) {
       case "lyrics":
         if (!params.prompt) {
           return res.status(400).json({
-            error: "Paramenter 'prompt' wajib diisi."
+            error: "Parameter 'prompt' wajib diisi."
           });
         }
         result = await api.lyrics(params);
         break;
       default:
         return res.status(400).json({
-          error: `Action tidak valid: ${action}. Gunakan: generate, status.`
+          error: `Action tidak valid: ${action}. Gunakan: generate, status, lyrics`
         });
     }
     return res.status(200).json(result);

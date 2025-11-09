@@ -1,117 +1,284 @@
-import axios from "axios";
-import CryptoJS from "crypto-js";
+import fetch from "node-fetch";
 import {
-  v4 as uuidv4
-} from "uuid";
-class ApiClient {
+  createHash,
+  createCipheriv,
+  randomBytes
+} from "crypto";
+class ChatAPI {
   constructor() {
-    this.api = axios.create({
-      baseURL: "https://api.chatgai.fun",
-      headers: {
-        "User-Agent": "Dart/3.6 (dart:io)",
-        "Content-Type": "application/json"
-      }
-    });
-    this.config = {
-      bundle: "com.aichatmaster.chat.gp",
+    this.baseURL = "https://api.chatgai.fun";
+    this.AES_KEY_STRING = "Ka7Ya98107EdGXQa";
+    this.AES_IV_STRING = "yc0q2icx1oq4lijm";
+    this.SHA1_MAGIC_STRING = "t6KeG6aKR5pm65oWn5aqS6LWE57O757ufS2V2aW4uWWFuZw";
+    this.deviceID = null;
+    this._userCreated = false;
+    this.defaultParams = {
       version: "2.6.6",
-      aiVersion: "GPT_DUPLICATE:v3.5-copy",
-      deviceMac: uuidv4()
-    };
-    this.secrets = {
-      key: "t6KeG6aKR5pm65oWn5aqS6LWE57O757ufS2V2aW4uWWFuZw",
-      aesKey: CryptoJS.enc.Utf8.parse("Ka7Ya98107EdGXQa"),
-      aesIv: CryptoJS.enc.Utf8.parse("yc0q2icx1oq4lijm")
+      aiVersion: "BOLATU:grok-4-fast-reasoning",
+      language: "id",
+      conversationId: "",
+      needSearch: 0,
+      type: "1",
+      bundle: "com.aichatmaster.chat.gp"
     };
   }
-  _nonce(length = 32) {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  _generateUUID() {
+    try {
+      const b = randomBytes(16);
+      b[6] = b[6] & 15 | 64;
+      b[8] = b[8] & 63 | 128;
+      return b.toString("hex").replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5");
+    } catch (e) {
+      console.error(`[ERROR] Generate UUID: ${e.message}`);
+      throw e;
+    }
+  }
+  _randomStr() {
+    const chars = "qwertyuiopasdfghjklzxcvbnmQAZXSWEDCVFRTGBNHYUJMKIOLP1234567890";
     let result = "";
-    for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+    for (let i = 0; i < 32; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
     return result;
   }
-  _sign(params) {
-    const excluded = new Set(["language", "type", "voice", "needVoice", "imageUrls", "botPrompt", "userId", "needSearch", "tonePrompt"]);
-    const queryString = Object.keys(params).filter(k => !excluded.has(k)).sort().map(k => `${k}=${params[k]}`).join("&");
-    return CryptoJS.SHA1(queryString + this.secrets.key).toString(CryptoJS.enc.Hex);
-  }
-  _encrypt(text) {
-    const encrypted = CryptoJS.AES.encrypt(text, this.secrets.aesKey, {
-      iv: this.secrets.aesIv,
-      mode: CryptoJS.mode.CBC,
-      padding: CryptoJS.pad.Pkcs7
-    });
-    return encrypted.ciphertext.toString(CryptoJS.enc.Hex);
-  }
-  async send({
-    prompt,
-    userId,
-    ...rest
-  }) {
+  _aesEncrypt(str) {
     try {
-      console.log("[LOG] Membangun payload...");
+      const key = Buffer.from(this.AES_KEY_STRING, "utf8");
+      const iv = Buffer.from(this.AES_IV_STRING, "utf8");
+      const cipher = createCipheriv("aes-128-cbc", key, iv);
+      let enc = cipher.update(str, "utf8", "hex");
+      enc += cipher.final("hex");
+      return enc.toUpperCase();
+    } catch (e) {
+      console.error(`[ERROR] AES encrypt: ${e.message}`);
+      throw e;
+    }
+  }
+  _genSecurity(params) {
+    try {
+      const nonce = this._randomStr();
+      const timestamp = Math.floor(Date.now() / 1e3);
       const payload = {
-        question: prompt,
-        ...this.config,
-        userId: userId || "",
-        timestamp: Math.floor(Date.now() / 1e3),
-        nonce: this._nonce(),
-        ...rest
+        ...this.defaultParams,
+        ...params,
+        deviceMac: this.deviceID,
+        nonce: nonce,
+        timestamp: timestamp
       };
-      payload.signature = this._sign(payload);
-      const body = {
-        bundle: this.config.bundle,
-        security: this._encrypt(JSON.stringify(payload))
-      };
-      console.log("[LOG] Mengirim permintaan ke /common/sse/chat...");
-      const response = await this.api.post("/common/sse/chat", body, {
-        responseType: "text"
+      const signKeys = ["aiVersion", "bundle", "conversationId", "deviceMac", "nonce", "question", "timestamp", "version"];
+      const signStr = signKeys.map(k => `${k}=${payload[k] || ""}`).join("&") + this.SHA1_MAGIC_STRING;
+      const signature = createHash("sha1").update(signStr, "utf8").digest("hex").toLowerCase();
+      payload.signature = signature;
+      const json = JSON.stringify(payload);
+      const encrypted = this._aesEncrypt(json);
+      return encrypted;
+    } catch (e) {
+      console.error(`[ERROR] Generate security: ${e.message}`);
+      throw e;
+    }
+  }
+  async _createUser() {
+    if (this._userCreated && this.deviceID) return;
+    try {
+      const deviceMac = this._generateUUID();
+      console.log(`[LOG] Creating user with deviceMac: ${deviceMac}`);
+      const response = await fetch(`${this.baseURL}/mb/createNewUser`, {
+        method: "POST",
+        headers: {
+          "User-Agent": "Dart/3.6 (dart:io)",
+          "Accept-Encoding": "gzip",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          deviceMac: deviceMac,
+          bundleId: this.defaultParams.bundle,
+          bundleVersion: this.defaultParams.version
+        })
       });
-      console.log("[LOG] Respons diterima, memproses data...");
-      const messages = response.data.split("\n\n").filter(Boolean);
-      const finalResult = messages.reduce((acc, msg) => {
-        if (msg.startsWith("data:")) {
-          const dataStr = msg.substring(5).trim();
-          if (dataStr === "[DONE]") return acc;
-          try {
-            const json = JSON.parse(dataStr);
-            acc.chunks.push(json);
-            acc.result += json.data?.answer || "";
-            if (json.data?.conversation_id && !acc.conversation_id) {
-              acc.conversation_id = json.data.conversation_id;
-            }
-          } catch (e) {
-            console.warn("[WARN] Gagal mem-parsing chunk JSON:", dataStr);
-          }
+      const text = await response.text();
+      console.log(`[LOG] CreateUser response: ${text}`);
+      if (response.ok) {
+        const jsonResponse = JSON.parse(text);
+        if (jsonResponse.code === 200 || jsonResponse.code === 400 && jsonResponse.msg === "User already exists") {
+          this.deviceID = deviceMac;
+          this._userCreated = true;
+          console.log(`[LOG] User registered successfully: ${this.deviceID}`);
+        } else {
+          throw new Error(`CreateUser failed: ${text}`);
         }
-        return acc;
-      }, {
-        result: "",
-        conversation_id: "",
-        chunks: []
+      } else {
+        throw new Error(`HTTP ${response.status} - CreateUser failed: ${text}`);
+      }
+    } catch (e) {
+      console.error(`[ERROR] CreateUser: ${e.message}`);
+      throw e;
+    }
+  }
+  async model({
+    language = "id"
+  } = {}) {
+    console.log(`\n========== MODEL FETCH START ==========`);
+    try {
+      const url = `${this.baseURL}/model/modelConfig?language=${language}`;
+      console.log(`[LOG] GET ${url}`);
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "User-Agent": "Dart/3.6 (dart:io)",
+          "Accept-Encoding": "gzip",
+          "Content-Type": "application/json"
+        }
       });
-      console.log("[LOG] Pemrosesan selesai.");
+      const text = await response.text();
+      console.log(`[LOG] Raw response: ${text}`);
+      if (!response.ok) {
+        return {
+          status: "Error",
+          error: `HTTP ${response.status}`,
+          raw: text
+        };
+      }
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch (e) {
+        return {
+          status: "Error",
+          error: "Invalid JSON",
+          raw: text
+        };
+      }
+      if (json.code !== 200) {
+        return {
+          status: "Error",
+          error: json.msg || "API error",
+          raw: json
+        };
+      }
+      console.log(`========== MODEL FETCH SUCCESS ==========\n`);
+      return {
+        status: "Success",
+        data: json
+      };
+    } catch (e) {
+      console.error(`[ERROR] Model fetch failed: ${e.message}`);
+      return {
+        status: "Error",
+        error: e.message
+      };
+    }
+  }
+  async chat({
+    prompt: question,
+    language = this.defaultParams.language,
+    conversationId = this.defaultParams.conversationId
+  }) {
+    if (!question) {
+      throw new Error("Question required");
+    }
+    console.log(`\n========== CHAT START ==========`);
+    console.log(`Question: ${question}`);
+    try {
+      await this._createUser();
+      console.log(`[LOG] Using deviceID: ${this.deviceID}`);
+      const chatParams = {
+        question: question,
+        language: language,
+        conversationId: conversationId
+      };
+      const security = this._genSecurity(chatParams);
+      const body = {
+        bundle: this.defaultParams.bundle,
+        security: security
+      };
+      const response = await fetch(`${this.baseURL}/common/sse/chat`, {
+        method: "POST",
+        headers: {
+          "User-Agent": "Dart/3.6 (dart:io)",
+          "Accept-Encoding": "gzip",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`HTTP ${response.status}: ${text}`);
+      }
+      const chunks = [];
+      for await (const chunk of response.body) {
+        chunks.push(chunk.toString());
+      }
+      const text = chunks.join("");
+      let fullAnswer = "";
+      let finalResult = {
+        answer: "",
+        message_id: "",
+        conversation_id: conversationId,
+        status: "Error"
+      };
+      const lines = text.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") break;
+          try {
+            const json = JSON.parse(data);
+            if (json.code === -1 && json.message === "签名失败") {
+              finalResult.status = "ERROR: Signature failed";
+              return finalResult;
+            }
+            const part = json.data?.answer || json.answer || "";
+            if (part) fullAnswer += part;
+            if (json.data?.message_id) finalResult.message_id = json.data.message_id;
+            if (json.data?.conversation_id) finalResult.conversation_id = json.data.conversation_id;
+            if (json.code === 0 && json.message === "成功") finalResult.status = "Success";
+          } catch (e) {}
+        }
+      }
+      finalResult.answer = fullAnswer.trim() || "No answer received";
+      console.log(`========== CHAT END ==========`);
       return finalResult;
-    } catch (error) {
-      console.error("[ERROR] Terjadi kesalahan saat mengirim permintaan:", error.response ? error.response.data : error.message);
-      throw error;
+    } catch (e) {
+      console.error(`[ERROR] Chat failed: ${e.message}`);
+      throw e;
     }
   }
 }
 export default async function handler(req, res) {
-  const params = req.method === "GET" ? req.query : req.body;
-  if (!params.prompt) {
+  const {
+    action,
+    ...params
+  } = req.method === "GET" ? req.query : req.body;
+  if (!action) {
     return res.status(400).json({
-      error: "Prompt are required"
+      error: "Parameter 'action' wajib diisi."
     });
   }
+  const api = new ChatAPI();
   try {
-    const client = new ApiClient();
-    const response = await client.send(params);
+    let response;
+    switch (action) {
+      case "chat":
+        if (!params.prompt) {
+          return res.status(400).json({
+            error: "Parameter 'prompt' wajib diisi untuk action 'chat'."
+          });
+        }
+        response = await api.chat(params);
+        break;
+      case "model":
+        response = await api.model(params);
+        break;
+      default:
+        return res.status(400).json({
+          error: `Action tidak valid: ${action}. Action yang didukung: 'chat', 'model'.`
+        });
+    }
     return res.status(200).json(response);
   } catch (error) {
-    res.status(500).json({
-      error: error.message || "Internal Server Error"
+    console.error(`[FATAL ERROR] Action '${action}':`, error);
+    return res.status(500).json({
+      error: error.message || "Internal server error"
     });
   }
 }

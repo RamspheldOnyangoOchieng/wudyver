@@ -4,15 +4,62 @@ import PROMPT from "@/configs/ai-prompt";
 const API_KEY = "AIzaSyDy2K9LXI3-DmvqdaW6F55DpmO9D7MR9YU";
 const BASE_URL = "https://api.getmorphai.com";
 const FIREBASE_AUTH_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signUp";
+const FIREBASE_REFRESH_URL = "https://securetoken.googleapis.com/v1/token";
 class MorphAI {
   constructor() {
     this.token = null;
+    this.refreshToken = null;
+    this.tokenExpiry = 0;
   }
   l(msg) {
     console.log(`[MorphAI] ${msg}`);
   }
+  isTokenExpired() {
+    return this.tokenExpiry < Date.now() + 5 * 60 * 1e3;
+  }
+  async refreshAuth() {
+    if (!this.refreshToken) {
+      this.l("Refresh: No refresh token available.");
+      return false;
+    }
+    this.l("Refresh: Starting token refresh...");
+    try {
+      const res = await fetch(`${FIREBASE_REFRESH_URL}?key=${API_KEY}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          grant_type: "refresh_token",
+          refresh_token: this.refreshToken
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || "Token refresh failed");
+      this.token = data.id_token;
+      this.refreshToken = data.refresh_token || this.refreshToken;
+      const expiresInMs = parseInt(data.expires_in, 10) * 1e3;
+      this.tokenExpiry = Date.now() + expiresInMs;
+      this.l("Refresh: Success");
+      return true;
+    } catch (e) {
+      this.l(`Refresh error: ${e.message}`);
+      this.token = null;
+      this.refreshToken = null;
+      this.tokenExpiry = 0;
+      return false;
+    }
+  }
   async auth() {
-    if (this.token) return this.token;
+    if (this.token && !this.isTokenExpired()) {
+      this.l("Auth: Token is valid.");
+      return this.token;
+    }
+    if (this.token && this.refreshToken && this.isTokenExpired()) {
+      this.l("Auth: Token expired, attempting refresh...");
+      const refreshed = await this.refreshAuth();
+      if (refreshed) return this.token;
+    }
     try {
       this.l("Auth: Starting anonymous sign-in...");
       const res = await fetch(`${FIREBASE_AUTH_URL}?key=${API_KEY}`, {
@@ -27,6 +74,9 @@ class MorphAI {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || "Auth failed");
       this.token = data.idToken;
+      this.refreshToken = data.refreshToken;
+      const expiresInMs = parseInt(data.expiresIn, 10) * 1e3;
+      this.tokenExpiry = Date.now() + expiresInMs;
       this.l("Auth: Success");
       return this.token;
     } catch (e) {

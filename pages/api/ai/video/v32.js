@@ -1,298 +1,574 @@
 import fetch from "node-fetch";
 import CryptoJS from "crypto-js";
 import apiConfig from "@/configs/apiConfig";
-class VideoAPI {
+import {
+  Agent as HttpsAgent
+} from "https";
+import FormData from "form-data";
+const httpsAgent = new HttpsAgent({
+  keepAlive: true
+});
+const MAX_ATTEMPTS = 3;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function downloadImage(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Gagal download gambar: ${res.status}`);
+  const arrayBuffer = await res.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+function getFilenameFromUrl(url) {
+  try {
+    return url.split("/").pop().split("?")[0] || "image.jpg";
+  } catch {
+    return "image.jpg";
+  }
+}
+class Api302Service {
   constructor() {
-    this.baseConfig = {
-      pictory: {
-        clientId: "7n3gkamqknqc4eisek9q3gniv0",
-        clientSecret: "AQICAHj6D/xxh0/2YyK+uvq1tF8IPsJO/sPk3uFhnRuOfl6yvAEWf1VYFWcGcp/HlovktLToAAAAlDCBkQYJKoZIhvcNAQcGoIGDMIGAAgEAMHsGCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQMENmzlyBkvHcc+T6tAgEQgE5siNOW1jc7LvHSVhMq5Qy9tOgcT+f0u69mhbjO5k7ejbD075+C9ulWDPk9XVtF3taBmY3nHPZ3KZ3fEP4C20De2Tjvn4f0euvds1nZfSs="
-      },
-      piapi: {
-        apiKey: "5f9a4bd59e9d6881772eccc6c29db164342cc65a3452ed372970afba80545ccb"
-      },
-      "302ai": {
-        apiKey: this.decode("U2FsdGVkX18X2u4ytWKJn26jLo3LXxoJV5pm+5QqOz+2C1+IS6IV+rIwM5IaU934VSGRczrNzFuU5+4Mo2zXJT7Lx46/jKlbMekUUwXlzz8=")
+    this.config = {
+      endpoint: "https://api.302.ai",
+      defaultHeaders: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + this.decode(this.randomSelect(["U2FsdGVkX1+oADOV0/Yem9pF6n0/yFKuAgEKlHywgT7VoJ3C8X7/1kdCXOXvkQ9vkk+rTNIMMBXqvPC6QYCAXoTL3OUVNuNDcjAVh2DUlqw=", "U2FsdGVkX18X2u4ytWKJn26jLo3LXxoJV5pm+5QqOz+2C1+IS6IV+rIwM5IaU934VSGRczrNzFuU5+4Mo2zXJT7Lx46/jKlbMekUUwXlzz8="]))
       }
     };
+  }
+  randomSelect(apiKeys) {
+    if (!apiKeys || apiKeys.length === 0) {
+      return null;
+    }
+    const randomIndex = Math.floor(Math.random() * apiKeys.length);
+    return apiKeys[randomIndex];
   }
   decode(teksTerenkripsi) {
     const bytes = CryptoJS.AES.decrypt(teksTerenkripsi, apiConfig.PASSWORD);
     const teksAsli = bytes.toString(CryptoJS.enc.Utf8);
-    if (!teksAsli) {
-        throw new Error("Dekripsi gagal: kunci salah atau data rusak");
-    }
+    if (!teksAsli) throw new Error("Dekripsi gagal");
     return teksAsli;
   }
-  getAvailableProviders() {
-    return [{
-      name: "pictory",
-      description: "Membutuhkan otentikasi (mengembalikan token) sebelum memulai tugas (start task).",
-      required_params: ["prompt"],
-      optional_params: ["duration", "aspectRatio"]
-    }, {
-      name: "302ai",
-      description: "Generasi video menggunakan API 302.ai.",
-      required_params: ["prompt"],
-      optional_params: ["duration", "model"]
-    }, {
-      name: "piapi",
-      description: "Generasi video menggunakan Piapi.",
-      required_params: ["prompt"],
-      optional_params: ["duration"]
-    }, {
-      name: "sora",
-      description: "Generasi video menggunakan model Sora (melalui 302.ai).",
-      required_params: ["prompt"],
-      optional_params: ["duration"]
-    }, {
-      name: "veo3",
-      description: "Hanya untuk pengecekan status tugas Veo3 (tidak ada generate).",
-      required_params: ["taskId"],
-      optional_params: []
-    }];
-  }
-  async generate({
-    provider,
-    ...rest
-  }) {
-    console.log(`🔄 Generating video with provider: ${provider}`);
-    try {
-      let result;
-      switch (provider) {
-        case "pictory":
-          result = await this._generatePictory(rest);
-          break;
-        case "302ai":
-          result = await this._generate302AI(rest);
-          break;
-        case "piapi":
-          result = await this._generatePiapi(rest);
-          break;
-        case "sora":
-          result = await this._generateSora(rest);
-          break;
-        default:
-          throw new Error(`Unsupported provider: ${provider}`);
+  _validateRequired(obj, fields) {
+    const errors = [];
+    for (const field of fields) {
+      if (obj[field] === undefined || obj[field] === null || obj[field] === "") {
+        errors.push({
+          field: field,
+          message: `Parameter '${field}' wajib diisi.`,
+          type: "required"
+        });
       }
-      console.log(`✅ Video generation completed for ${provider}`);
-      return result;
-    } catch (error) {
-      console.error(`❌ Generation failed for ${provider}:`, error.message);
-      throw error;
     }
+    return errors;
   }
-  async status({
-    provider,
-    ...rest
-  }) {
-    console.log(`🔍 Checking status with provider: ${provider}`);
-    try {
-      let status;
-      switch (provider) {
-        case "pictory":
-          status = await this._statusPictory(rest);
-          break;
-        case "302ai":
-          status = await this._status302AI(rest);
-          break;
-        case "piapi":
-          status = await this._statusPiapi(rest);
-          break;
-        case "sora":
-          status = await this._statusSora(rest);
-          break;
-        case "veo3":
-          status = await this._statusVeo3(rest);
-          break;
-        default:
-          throw new Error(`Unsupported provider: ${provider}`);
+  _validateEnum(value, field, allowed) {
+    const errors = [];
+    if (value !== undefined && value !== null && value !== "") {
+      if (!allowed.includes(value)) {
+        errors.push({
+          field: field,
+          message: `Parameter '${field}' harus salah satu dari: ${allowed.join(", ")}`,
+          type: "invalid_enum"
+        });
       }
-      console.log(`✅ Status check completed for ${provider}`);
-      return status;
-    } catch (error) {
-      console.error(`❌ Status check failed for ${provider}:`, error.message);
-      throw error;
     }
+    return errors;
   }
-  async _generatePictory({
-    prompt,
-    duration = 5,
-    aspectRatio = "16:9"
-  }) {
-    console.log("🔄 Getting Pictory access token...");
-    const authResponse = await fetch("https://api.pictory.ai/pictoryapis/v1/oauth2/token", {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        client_id: this.baseConfig.pictory.clientId,
-        client_secret: this.baseConfig.pictory.clientSecret
-      })
-    });
-    if (!authResponse.ok) {
-      throw new Error(`Pictory auth failed: ${authResponse.status}`);
-    }
-    const authData = await authResponse.json();
-    return authData;
-  }
-  async _generate302AI({
-    prompt,
-    duration = 8,
-    model = "veo3.1"
-  }) {
-    const response = await fetch("https://api.302.ai/302/submit/veo3-v2", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.baseConfig["302ai"].apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        prompt: prompt,
-        aspect_ratio: "16:9",
-        model: model,
-        duration: duration?.toString() || "8"
-      })
-    });
-    if (!response.ok) {
-      throw new Error(`302.ai generation failed: ${response.status}`);
-    }
-    return await response.json();
-  }
-  async _generatePiapi({
-    prompt,
-    duration = 5
-  }) {
-    const response = await fetch("https://api.piapi.ai/api/v1/generate", {
-      method: "POST",
-      headers: {
-        "x-api-key": this.baseConfig.piapi.apiKey,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        prompt: prompt,
-        duration: duration?.toString() || "5",
-        model: "piano"
-      })
-    });
-    if (!response.ok) {
-      throw new Error(`Piapi generation failed: ${response.status}`);
-    }
-    return await response.json();
-  }
-  async _generateSora({
-    prompt,
-    duration = 8
-  }) {
-    const response = await fetch("https://api.302.ai/openai/v1/videos", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.baseConfig["302ai"].apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        prompt: prompt,
-        seconds: duration?.toString() || "8",
-        size: "1:1",
-        model: "sora-2"
-      })
-    });
-    if (!response.ok) {
-      throw new Error(`Sora generation failed: ${response.status}`);
-    }
-    return await response.json();
-  }
-  async _statusPictory({
-    taskId,
-    accessToken
-  }) {
-    const response = await fetch(`https://api.pictory.ai/pictoryapis/v1/tasks/${taskId}`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
+  async _resolveImage(imageInput) {
+    if (!imageInput) return null;
+    let buffer, filename = "image.jpg";
+    if (typeof imageInput === "string") {
+      if (imageInput.startsWith("http://") || imageInput.startsWith("https://")) {
+        buffer = await downloadImage(imageInput);
+        filename = getFilenameFromUrl(imageInput);
+      } else if (imageInput.startsWith("data:")) {
+        const matches = imageInput.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        if (!matches) throw new Error("Format base64 tidak valid");
+        buffer = Buffer.from(matches[2], "base64");
+        filename = `image.${matches[1].split("/")[1] || "png"}`;
+      } else {
+        throw new Error("String image harus berupa URL atau base64");
       }
-    });
-    if (!response.ok) {
-      throw new Error(`Pictory status check failed: ${response.status}`);
+    } else if (Buffer.isBuffer(imageInput)) {
+      buffer = imageInput;
+    } else {
+      throw new Error("image harus string (URL/base64) atau Buffer");
     }
-    return await response.json();
-  }
-  async _status302AI({
-    taskId,
-    id
-  }) {
-    const taskIdentifier = taskId || id;
-    const response = await fetch(`https://api.302.ai/klingai/task/${taskIdentifier}/fetch?geo=global`, {
-      headers: {
-        Authorization: `Bearer ${this.baseConfig["302ai"].apiKey}`,
-        "Content-Type": "application/json"
-      }
-    });
-    if (!response.ok) {
-      throw new Error(`302.ai status check failed: ${response.status}`);
-    }
-    return await response.json();
-  }
-  async _statusPiapi({
-    taskId,
-    id
-  }) {
-    const taskIdentifier = taskId || id;
-    const response = await fetch(`https://api.piapi.ai/api/v1/task/${taskIdentifier}`, {
-      headers: {
-        "x-api-key": this.baseConfig.piapi.apiKey,
-        "Content-Type": "application/json"
-      }
-    });
-    if (!response.ok) {
-      throw new Error(`Piapi status check failed: ${response.status}`);
-    }
-    return await response.json();
-  }
-  async _statusSora({
-    taskId,
-    id
-  }) {
-    const taskIdentifier = taskId || id;
-    const response = await fetch(`https://api.302.ai/openai/v1/videos/${taskIdentifier}/content`, {
-      headers: {
-        Authorization: `Bearer ${this.baseConfig["302ai"].apiKey}`,
-        "Content-Type": "application/json"
-      }
-    });
-    if (!response.ok) {
-      throw new Error(`Sora status check failed: ${response.status}`);
-    }
-    return await response.json();
-  }
-  async _statusVeo3({
-    taskId,
-    id
-  }) {
-    const taskIdentifier = taskId || id;
-    const encodedOp = encodeURIComponent(taskIdentifier);
-    const response = await fetch(`https://salesupp.net/check-status?operation=${encodedOp}`);
-    if (!response.ok) {
-      throw new Error(`Veo3 status check failed: ${response.status}`);
-    }
-    return await response.json();
-  }
-  _getSignature(data) {
-    const jsonString = typeof data === "string" ? data : JSON.stringify(data);
-    return CryptoJS.HmacSHA256(jsonString, "8f23b7c0ae4d4c9c8d91babc9ef8c3fa").toString();
-  }
-  _getVideoDimensions(aspectRatio = "16:9") {
-    const [widthRatio, heightRatio] = aspectRatio.split(":").map(Number);
-    const baseWidth = 400;
-    const height = baseWidth * heightRatio / widthRatio;
     return {
-      width: baseWidth,
-      height: Math.round(height)
+      buffer: buffer,
+      filename: filename
     };
   }
+  async _attemptReq(params, attempt = 1) {
+    const {
+      path,
+      method,
+      basePath = "",
+      formData
+    } = params;
+    const url = `${this.config.endpoint}${basePath || ""}${path}`;
+    let response, responseText;
+    try {
+      const options = {
+        method: method,
+        headers: {
+          ...this.config.defaultHeaders
+        },
+        agent: httpsAgent
+      };
+      if (formData) {
+        delete options.headers["Content-Type"];
+        options.body = formData;
+      } else if (params.data) {
+        options.body = JSON.stringify(params.data);
+      }
+      console.log(`[API_REQ] ${method} ${url} (Attempt ${attempt})`);
+      response = await fetch(url, options);
+      responseText = await response.text();
+      if (!response.ok) {
+        if (response.status >= 500 && attempt < MAX_ATTEMPTS) {
+          await sleep(attempt * 1e3);
+          return await this._attemptReq(params, attempt + 1);
+        }
+        throw new Error(`HTTP ${response.status}: ${responseText}`);
+      }
+      try {
+        return JSON.parse(responseText);
+      } catch {
+        return {
+          raw: responseText
+        };
+      }
+    } catch (error) {
+      const isNetwork = /fetch|ECONN|EHOST/.test(error.message);
+      if (isNetwork && attempt < MAX_ATTEMPTS) {
+        await sleep(attempt * 1e3);
+        return await this._attemptReq(params, attempt + 1);
+      }
+      throw error;
+    }
+  }
+  async img2vid({
+    image,
+    prompt
+  }) {
+    this._validateRequired({
+      image: image,
+      prompt: prompt
+    }, ["image", "prompt"]);
+    const {
+      buffer,
+      filename
+    } = await this._resolveImage(image);
+    const form = new FormData();
+    form.append("image", buffer, {
+      filename: filename
+    });
+    form.append("prompt", prompt);
+    return await this._attemptReq({
+      method: "POST",
+      path: "/302/submit/image-to-video",
+      formData: form
+    });
+  }
+  async wan({
+    image,
+    prompt,
+    last_image = "",
+    num_frames = 81,
+    resolution = "480p",
+    frames_per_second = 16,
+    interpolate_output = true,
+    lora_scale_transformer = 1,
+    lora_weights_transformer = "1",
+    lora_scale_transformer_2 = 1,
+    lora_weights_transformer_2 = "1",
+    seed = 123456
+  }) {
+    this._validateRequired({
+      image: image,
+      prompt: prompt
+    }, ["image", "prompt"]);
+    this._validateEnum(resolution, "resolution", ["480p", "720p", "1080p"]);
+    return await this._attemptReq({
+      method: "POST",
+      path: "/302/submit/wan-2.2-i2v-fast",
+      data: {
+        image: image,
+        prompt: prompt,
+        last_image: last_image,
+        num_frames: num_frames,
+        resolution: resolution,
+        frames_per_second: frames_per_second,
+        interpolate_output: interpolate_output,
+        lora_scale_transformer: lora_scale_transformer,
+        lora_weights_transformer: lora_weights_transformer,
+        lora_scale_transformer_2: lora_scale_transformer_2,
+        lora_weights_transformer_2: lora_weights_transformer_2,
+        seed: seed
+      }
+    });
+  }
+  async wanStatus({
+    task_id
+  }) {
+    this._validateRequired({
+      task_id: task_id
+    }, ["task_id"]);
+    return await this._attemptReq({
+      method: "GET",
+      path: `/302/task/${task_id}/fetch`
+    });
+  }
+  async openaiVideo({
+    prompt,
+    model = "sora-2",
+    seconds = 4,
+    size = "1280x720",
+    input_reference
+  }) {
+    this._validateRequired({
+      prompt: prompt
+    }, ["prompt"]);
+    this._validateEnum(size, "size", ["1280x720", "720x1280", "1920x1080"]);
+    const data = {
+      prompt: prompt,
+      model: model,
+      seconds: seconds,
+      size: size
+    };
+    if (input_reference) data.input_reference = input_reference;
+    return await this._attemptReq({
+      method: "POST",
+      path: "/openai/v1/videos",
+      data: data
+    });
+  }
+  async openaiStatus({
+    task_id
+  }) {
+    this._validateRequired({
+      task_id: task_id
+    }, ["task_id"]);
+    return await this._attemptReq({
+      method: "GET",
+      path: `/openai/v1/videos/${task_id}/content?variant=video`
+    });
+  }
+  async sora({
+    model = "sora-2",
+    orientation = "portrait",
+    prompt,
+    size = "small",
+    duration = 10,
+    images = []
+  }) {
+    this._validateRequired({
+      prompt: prompt
+    }, ["prompt"]);
+    this._validateEnum(orientation, "orientation", ["portrait", "landscape"]);
+    this._validateEnum(size, "size", ["small", "medium", "large"]);
+    return await this._attemptReq({
+      method: "POST",
+      path: "/sora/v2/video",
+      data: {
+        model: model,
+        orientation: orientation,
+        prompt: prompt,
+        size: size,
+        duration: duration,
+        images: images
+      }
+    });
+  }
+  async soraStatus({
+    task_id
+  }) {
+    this._validateRequired({
+      task_id: task_id
+    }, ["task_id"]);
+    return await this._attemptReq({
+      method: "GET",
+      path: `/sora/v2/video/${task_id}`
+    });
+  }
+  async _veo3Base({
+    prompt,
+    model,
+    enhance_prompt = true,
+    images = [],
+    aspect_ratio = "16:9"
+  }) {
+    this._validateRequired({
+      prompt: prompt
+    }, ["prompt"]);
+    this._validateEnum(aspect_ratio, "aspect_ratio", ["16:9", "9:16", "1:1", "4:3", "3:4"]);
+    const data = {
+      prompt: prompt,
+      model: model,
+      enhance_prompt: enhance_prompt,
+      aspect_ratio: aspect_ratio
+    };
+    if (images.length) data.images = images;
+    return await this._attemptReq({
+      method: "POST",
+      path: "/302/submit/veo3-v2",
+      data: data
+    });
+  }
+  async veo3(params) {
+    params.model = "veo3.1";
+    return this._veo3Base(params);
+  }
+  async veo3v2(params) {
+    params.model = "veo3-pro-frames";
+    return this._veo3Base(params);
+  }
+  async veo3Fast({
+    text_prompt
+  }) {
+    this._validateRequired({
+      text_prompt: text_prompt
+    }, ["text_prompt"]);
+    return await this._attemptReq({
+      method: "POST",
+      path: "/302/submit/veo3-fast",
+      data: {
+        text_prompt: text_prompt
+      }
+    });
+  }
+  async veo3Pro({
+    text_prompt
+  }) {
+    this._validateRequired({
+      text_prompt: text_prompt
+    }, ["text_prompt"]);
+    return await this._attemptReq({
+      method: "POST",
+      path: "/302/submit/veo3-pro",
+      data: {
+        text_prompt: text_prompt
+      }
+    });
+  }
+  async veo({
+    prompt,
+    aspect_ratio = "9:16",
+    enhance_prompt = true,
+    generate_audio = true
+  }) {
+    this._validateRequired({
+      prompt: prompt
+    }, ["prompt"]);
+    this._validateEnum(aspect_ratio, "aspect_ratio", ["16:9", "9:16", "1:1"]);
+    return await this._attemptReq({
+      method: "POST",
+      path: "/302/submit/veo3",
+      data: {
+        prompt: prompt,
+        aspect_ratio: aspect_ratio,
+        enhance_prompt: enhance_prompt,
+        generate_audio: generate_audio
+      }
+    });
+  }
+  async veoStatus({
+    request_id,
+    type = "veo3"
+  }) {
+    this._validateRequired({
+      request_id: request_id
+    }, ["request_id"]);
+    const paths = {
+      veo3: `/302/submit/veo3?request_id=${request_id}`,
+      "veo3-v2": `/302/submit/veo3-v2/${request_id}`,
+      "veo3-fast": `/302/submit/veo3-fast?request_id=${request_id}`,
+      "veo3-pro": `/302/submit/veo3-pro?request_id=${request_id}`
+    };
+    if (!paths[type]) throw new Error(`Tipe status tidak valid: ${type}`);
+    return await this._attemptReq({
+      method: "GET",
+      path: paths[type]
+    });
+  }
+  async kling({
+    input_image,
+    prompt,
+    negative_prompt = "",
+    cfg = "0.5",
+    aspect_ratio = "1:1",
+    camera_type = "zoom",
+    camera_value = "-5",
+    enable_audio = "",
+    callback = ""
+  }) {
+    this._validateRequired({
+      input_image: input_image,
+      prompt: prompt
+    }, ["input_image", "prompt"]);
+    this._validateEnum(aspect_ratio, "aspect_ratio", ["1:1", "16:9", "9:16", "4:3", "3:4"]);
+    this._validateEnum(camera_type, "camera_type", ["zoom", "pan", "tilt", "dolly"]);
+    const {
+      buffer,
+      filename
+    } = await this._resolveImage(input_image);
+    const form = new FormData();
+    form.append("input_image", buffer, {
+      filename: filename
+    });
+    form.append("prompt", prompt);
+    form.append("negative_prompt", negative_prompt);
+    form.append("cfg", cfg);
+    form.append("aspect_ratio", aspect_ratio);
+    form.append("camera_type", camera_type);
+    form.append("camera_value", camera_value);
+    if (enable_audio) form.append("enable_audio", enable_audio);
+    if (callback) form.append("callback", callback);
+    return await this._attemptReq({
+      method: "POST",
+      path: "/klingai/m2v_15_img2video",
+      formData: form
+    });
+  }
+  async cogs({
+    model = "cogvideox-3",
+    prompt
+  }) {
+    this._validateRequired({
+      prompt: prompt
+    }, ["prompt"]);
+    return await this._attemptReq({
+      method: "POST",
+      path: "/zhipu/api/paas/v4/videos/generations",
+      data: {
+        model: model,
+        prompt: prompt
+      },
+      headers: {
+        "Content-Type": "application/json;charset:utf-8;"
+      }
+    });
+  }
+  async cogsStatus({
+    task_id
+  }) {
+    this._validateRequired({
+      task_id: task_id
+    }, ["task_id"]);
+    return await this._attemptReq({
+      method: "GET",
+      path: `/zhipu/api/paas/v4/async-result/${task_id}`,
+      headers: {
+        "Content-Type": "application/json;charset:utf-8;"
+      }
+    });
+  }
+  async minimax({
+    model = "MiniMax-Hailuo-2.3-fast",
+    first_frame_image,
+    prompt,
+    duration = 6,
+    resolution = "768P"
+  }) {
+    this._validateRequired({
+      first_frame_image: first_frame_image,
+      prompt: prompt
+    }, ["first_frame_image", "prompt"]);
+    this._validateEnum(resolution, "resolution", ["768P", "1080P"]);
+    return await this._attemptReq({
+      method: "POST",
+      path: "/minimaxi/v1/video_generation",
+      data: {
+        model: model,
+        first_frame_image: first_frame_image,
+        prompt: prompt,
+        duration: duration,
+        resolution: resolution
+      }
+    });
+  }
+  async minimaxStatus({
+    task_id
+  }) {
+    this._validateRequired({
+      task_id: task_id
+    }, ["task_id"]);
+    return await this._attemptReq({
+      method: "GET",
+      path: `/minimaxi/v1/query/video_generation?task_id=${task_id}`
+    });
+  }
+  async minimaxFile({
+    file_id,
+    task_id
+  }) {
+    this._validateRequired({
+      file_id: file_id,
+      task_id: task_id
+    }, ["file_id", "task_id"]);
+    return await this._attemptReq({
+      method: "GET",
+      path: `/minimaxi/v1/files/retrieve?file_id=${file_id}&task_id=${task_id}`
+    });
+  }
+  async pix({
+    model = "v5",
+    prompt,
+    fusion = [],
+    aspect_ratio = "16:9"
+  }) {
+    this._validateRequired({
+      prompt: prompt
+    }, ["prompt"]);
+    this._validateEnum(aspect_ratio, "aspect_ratio", ["16:9", "9:16", "1:1"]);
+    return await this._attemptReq({
+      method: "POST",
+      path: "/pix/generate",
+      data: {
+        model: model,
+        prompt: prompt,
+        fusion: fusion,
+        aspect_ratio: aspect_ratio
+      }
+    });
+  }
+  async pixStatus({
+    task_id
+  }) {
+    this._validateRequired({
+      task_id: task_id
+    }, ["task_id"]);
+    return await this._attemptReq({
+      method: "GET",
+      path: `/pix/task/${task_id}/fetch`
+    });
+  }
 }
+const ACTION_MAP = {
+  img2vid: "img2vid",
+  wan: "wan",
+  wan_status: "wanStatus",
+  openai_video: "openaiVideo",
+  openai_status: "openaiStatus",
+  sora: "sora",
+  sora_status: "soraStatus",
+  veo3: "veo3",
+  veo3v2: "veo3v2",
+  veo3_fast: "veo3Fast",
+  veo3_pro: "veo3Pro",
+  veo: "veo",
+  veo_status: "veoStatus",
+  kling: "kling",
+  cogs: "cogs",
+  cogs_status: "cogsStatus",
+  minimax: "minimax",
+  minimax_status: "minimaxStatus",
+  minimax_file: "minimaxFile",
+  pix: "pix",
+  pix_status: "pixStatus"
+};
+const VALID_ACTIONS = Object.keys(ACTION_MAP);
 export default async function handler(req, res) {
   const {
     action,
@@ -300,78 +576,27 @@ export default async function handler(req, res) {
   } = req.method === "GET" ? req.query : req.body;
   if (!action) {
     return res.status(400).json({
-      error: "Parameter 'action' wajib diisi.",
-      available_actions: ["generate", "status", "providers"]
+      error: "Parameter 'action' wajib diisi."
     });
   }
-  const api = new VideoAPI();
+  const apiMethodName = ACTION_MAP[action];
+  if (!apiMethodName) {
+    return res.status(400).json({
+      error: `Action tidak valid: ${action}`,
+      message: `Harap gunakan salah satu action berikut: ${VALID_ACTIONS.join(", ")}`,
+      valid_actions: VALID_ACTIONS
+    });
+  }
+  const api = new Api302Service();
+  let result;
   try {
-    let response;
-    switch (action) {
-      case "generate":
-        if (!params.provider) {
-          const providers = api.getAvailableProviders();
-          return res.status(400).json({
-            error: "Parameter 'provider' wajib diisi untuk action 'generate'.",
-            available_providers: providers.map(p => ({
-              name: p.name,
-              description: p.description,
-              required_params: p.required_params,
-              optional_params: p.optional_params
-            }))
-          });
-        }
-        if (!params.prompt) {
-          return res.status(400).json({
-            error: "Parameter 'prompt' wajib diisi untuk action 'generate'."
-          });
-        }
-        response = await api.generate(params);
-        break;
-      case "status":
-        if (!params.provider) {
-          const providers = api.getAvailableProviders();
-          return res.status(400).json({
-            error: "Parameter 'provider' wajib diisi untuk action 'status'.",
-            available_providers: providers.map(p => ({
-              name: p.name,
-              description: p.description
-            }))
-          });
-        }
-        if (!params.id && !params.taskId) {
-          return res.status(400).json({
-            error: "Parameter 'id' (Task ID) wajib diisi untuk action 'status'."
-          });
-        }
-        response = await api.status(params);
-        break;
-      case "providers":
-        response = api.getAvailableProviders();
-        break;
-      default:
-        return res.status(400).json({
-          error: `Action tidak valid: ${action}.`,
-          available_actions: ["generate", "status", "providers"]
-        });
-    }
-    return res.status(200).json(response);
+    result = await api[apiMethodName](params);
+    return res.status(200).json(result);
   } catch (error) {
-    console.error(`[FATAL ERROR] Kegagalan pada action '${action}':`, error);
-    if (error.message.includes("provider") || error.message.includes("Unsupported")) {
-      const providers = api.getAvailableProviders();
-      return res.status(400).json({
-        error: error.message,
-        available_providers: providers.map(p => ({
-          name: p.name,
-          description: p.description,
-          required_params: p.required_params,
-          optional_params: p.optional_params
-        }))
-      });
-    }
-    return res.status(500).json({
-      error: error.message || "Terjadi kesalahan internal pada server."
+    console.error(`[ERROR] ${action}:`, error.message);
+    res.status(400).json({
+      success: false,
+      error: error.message
     });
   }
 }
