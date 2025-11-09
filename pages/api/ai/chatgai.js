@@ -158,7 +158,7 @@ class ChatAPI {
       console.log(`========== MODEL FETCH SUCCESS ==========\n`);
       return {
         status: "Success",
-        data: json
+        data: json?.data
       };
     } catch (e) {
       console.error(`[ERROR] Model fetch failed: ${e.message}`);
@@ -171,7 +171,9 @@ class ChatAPI {
   async chat({
     prompt: question,
     language = this.defaultParams.language,
-    conversationId = this.defaultParams.conversationId
+    conversationId = this.defaultParams.conversationId,
+    model = this.defaultParams.aiVersion,
+    ...rest
   }) {
     if (!question) {
       throw new Error("Question required");
@@ -184,7 +186,9 @@ class ChatAPI {
       const chatParams = {
         question: question,
         language: language,
-        conversationId: conversationId
+        conversationId: conversationId,
+        aiVersion: model,
+        ...rest
       };
       const security = this._genSecurity(chatParams);
       const body = {

@@ -1,5 +1,5 @@
-const axios = require("axios");
-class GmailApi {
+import axios from "axios";
+class TemporaryGmailApi {
   constructor(apiKey = "33b5fc1663msha9ab0128c5449e7p13f98bjsnc0b11b98db57") {
     this.baseUrl = "https://temporary-gmail-account.p.rapidapi.com";
     this.apiKey = apiKey;
@@ -8,113 +8,225 @@ class GmailApi {
       "x-rapidapi-host": "temporary-gmail-account.p.rapidapi.com",
       "x-rapidapi-key": this.apiKey
     };
-    console.log("GmailApi initialized with base URL:", this.baseUrl);
+    this.api = axios.create({
+      baseURL: this.baseUrl,
+      headers: this.headers
+    });
+    console.log("Proses: TemporaryGmailApi diinisialisasi.");
   }
-  async getAccount({
+  async _doPostReq(endpoint, data, actionName) {
+    const fullUrl = `${this.baseUrl}${endpoint}`;
+    console.log(`Proses: Memulai request POST [${actionName}] ke: ${fullUrl}`);
+    let result = {
+      success: false,
+      status_code: 500,
+      message: `Gagal melakukan aksi ${actionName}.`,
+      data: null,
+      metadata: {
+        endpoint: endpoint,
+        input_data: data
+      }
+    };
+    try {
+      const response = await this.api.post(endpoint, data);
+      console.log(`Proses: Request ${actionName} berhasil.`);
+      const responseData = response.data || {};
+      const isSuccess = response.status === 200 && !responseData.error;
+      result.success = isSuccess;
+      result.status_code = response.status;
+      result.message = isSuccess ? `${actionName} berhasil.` : responseData.message || responseData.error || `Aksi ${actionName} gagal.`;
+      result.data = responseData;
+      return result;
+    } catch (error) {
+      const status = error.response?.status || 500;
+      const errorData = error.response?.data || {};
+      const message = errorData.error || error.message || `Terjadi kesalahan saat ${actionName}`;
+      console.error(`ERROR: Aksi ${actionName} gagal! Status: ${status}, Pesan: ${message}`);
+      result.status_code = status;
+      result.message = message;
+      result.data = errorData;
+      return result;
+    }
+  }
+  async create({
     generateNewAccount = 0,
     ...rest
   } = {}) {
-    console.log("Starting getAccount with params:", {
+    return await this._doPostReq("/GmailGetAccount", {
       generateNewAccount: generateNewAccount,
       ...rest
-    });
-    try {
-      const response = await axios.post(`${this.baseUrl}/GmailGetAccount`, {
-        generateNewAccount: generateNewAccount,
-        ...rest
-      }, {
-        headers: this.headers
-      });
-      console.log("getAccount response received:", response?.data);
-      return response?.data || {};
-    } catch (error) {
-      console.error("getAccount error:", error?.response?.data || error.message);
-      throw error;
-    }
+    }, "buat (getAccount)");
   }
-  async getMessages({
+  async inbox({
     address,
     token,
     ...rest
   } = {}) {
-    console.log("Starting getMessages with params:", {
+    if (!address || !token) {
+      return {
+        success: false,
+        status_code: 400,
+        message: "Parameter 'address' dan 'token' harus diisi.",
+        data: null,
+        metadata: {
+          input: {
+            address: address || "N/A",
+            token: token ? "Provided" : "N/A"
+          }
+        }
+      };
+    }
+    return await this._doPostReq("/GmailGetMessages", {
       address: address,
       token: token,
       ...rest
-    });
-    try {
-      const response = await axios.post(`${this.baseUrl}/GmailGetMessages`, {
-        address: address,
-        token: token,
-        ...rest
-      }, {
-        headers: this.headers
-      });
-      console.log("getMessages response received:", response?.data);
-      return response?.data || {};
-    } catch (error) {
-      console.error("getMessages error:", error?.response?.data || error.message);
-      throw error;
-    }
+    }, "kotak (getMessages)");
   }
-  async getMessage({
+  async message({
     messageId,
     address,
     token,
     ...rest
   } = {}) {
-    console.log("Starting getMessage with params:", {
+    if (!messageId || !address || !token) {
+      return {
+        success: false,
+        status_code: 400,
+        message: `Parameter ${(!messageId ? "messageId " : "") || (!address ? "address " : "") || (!token ? "token " : "")}harus diisi.`,
+        data: null,
+        metadata: {
+          input: {
+            messageId: messageId,
+            address: address,
+            token: token ? "Provided" : "N/A"
+          }
+        }
+      };
+    }
+    return await this._doPostReq("/GmailGetMessage", {
       messageId: messageId,
       address: address,
       token: token,
       ...rest
-    });
-    try {
-      const response = await axios.post(`${this.baseUrl}/GmailGetMessage`, {
-        messageId: messageId,
-        address: address,
-        token: token,
-        ...rest
-      }, {
-        headers: this.headers
-      });
-      console.log("getMessage response received:", response?.data);
-      return response?.data || {};
-    } catch (error) {
-      console.error("getMessage error:", error?.response?.data || error.message);
-      throw error;
-    }
+    }, "baca (getMessage)");
   }
-  async downloadAttachment({
+  async download({
     fileName,
     messageId,
     address,
     token,
     ...rest
   } = {}) {
-    console.log("Starting downloadAttachment with params:", {
+    if (!fileName || !messageId || !address || !token) {
+      return {
+        success: false,
+        status_code: 400,
+        message: "Semua parameter (fileName, messageId, address, token) harus diisi.",
+        data: null,
+        metadata: {
+          input: {
+            fileName: fileName,
+            messageId: messageId,
+            address: address,
+            token: token ? "Provided" : "N/A"
+          }
+        }
+      };
+    }
+    return await this._doPostReq("/GmailAttachmentDownload", {
       fileName: fileName,
       messageId: messageId,
       address: address,
       token: token,
       ...rest
-    });
-    try {
-      const response = await axios.post(`${this.baseUrl}/GmailAttachmentDownload`, {
-        fileName: fileName,
-        messageId: messageId,
-        address: address,
-        token: token,
-        ...rest
-      }, {
-        headers: this.headers
-      });
-      console.log("downloadAttachment response received:", response?.data);
-      return response?.data || {};
-    } catch (error) {
-      console.error("downloadAttachment error:", error?.response?.data || error.message);
-      throw error;
-    }
+    }, "unduh (downloadAttachment)");
   }
 }
-module.exports = GmailApi;
+export default async function handler(req, res) {
+  const {
+    action,
+    ...params
+  } = req.method === "GET" ? req.query : req.body;
+  const api = new TemporaryGmailApi();
+  try {
+    switch (action) {
+      case "create":
+        try {
+          console.log(`API Proses: Menerima permintaan 'create' (buat) dengan params: ${JSON.stringify(params)}`);
+          const result = await api.create(params);
+          return res.status(result.status_code || 200).json(result);
+        } catch (error) {
+          console.error("API Create Error:", error.message);
+          return res.status(500).json({
+            error: "Failed to create/get account.",
+            details: error.message
+          });
+        }
+      case "inbox":
+        if (!params.address || !params.token) {
+          return res.status(400).json({
+            error: "Missing 'address' or 'token' parameters.",
+            example: "{ action: 'inbox', address: 'user@temp-gmail.com', token: 'XYZ...' }"
+          });
+        }
+        try {
+          console.log(`API Proses: Menerima permintaan 'inbox' (kotak) untuk Address: ${params.address}`);
+          const result = await api.inbox(params);
+          return res.status(result.status_code || 200).json(result);
+        } catch (error) {
+          console.error("API Inbox Error:", error.message);
+          return res.status(500).json({
+            error: "Failed to retrieve inbox messages.",
+            details: error.message
+          });
+        }
+      case "message":
+        if (!params.messageId || !params.address || !params.token) {
+          return res.status(400).json({
+            error: "Missing 'messageId', 'address', or 'token' parameters.",
+            example: "{ action: 'message', messageId: 'MSG123', address: 'user@temp-gmail.com', token: 'XYZ...' }"
+          });
+        }
+        try {
+          console.log(`API Proses: Menerima permintaan 'message' (baca) untuk Message ID: ${params.messageId}`);
+          const result = await api.message(params);
+          return res.status(result.status_code || 200).json(result);
+        } catch (error) {
+          console.error("API Message Detail Error:", error.message);
+          return res.status(500).json({
+            error: "Failed to retrieve message detail.",
+            details: error.message
+          });
+        }
+      case "download":
+        if (!params.fileName || !params.messageId || !params.address || !params.token) {
+          return res.status(400).json({
+            error: "Missing 'fileName', 'messageId', 'address', or 'token' parameters.",
+            example: "{ action: 'download', fileName: 'file.pdf', messageId: 'MSG123', address: 'user@temp-gmail.com', token: 'XYZ...' }"
+          });
+        }
+        try {
+          console.log(`API Proses: Menerima permintaan 'download' (unduh) untuk File: ${params.fileName}`);
+          const result = await api.download(params);
+          return res.status(result.status_code || 200).json(result);
+        } catch (error) {
+          console.error("API Download Error:", error.message);
+          return res.status(500).json({
+            error: "Failed to download attachment.",
+            details: error.message
+          });
+        }
+      default:
+        return res.status(400).json({
+          error: "Invalid action. Use 'create', 'inbox', 'message', or 'download'.",
+          available_actions: ["create", "inbox", "message", "download"]
+        });
+    }
+  } catch (error) {
+    console.error("Internal Server Error in API handler:", error.message);
+    return res.status(500).json({
+      error: "Internal Server Error",
+      details: error.message
+    });
+  }
+}
