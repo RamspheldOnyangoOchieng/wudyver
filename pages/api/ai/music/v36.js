@@ -1,6 +1,4 @@
 import fetch from "node-fetch";
-import CryptoJS from "crypto-js";
-import apiConfig from "@/configs/apiConfig";
 import {
   Agent as HttpsAgent
 } from "https";
@@ -21,7 +19,7 @@ class Api302Service {
       defaultHeaders: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: "Bearer " + this.decode(this.randomSelect(["U2FsdGVkX1+oADOV0/Yem9pF6n0/yFKuAgEKlHywgT7VoJ3C8X7/1kdCXOXvkQ9vkk+rTNIMMBXqvPC6QYCAXoTL3OUVNuNDcjAVh2DUlqw=", "U2FsdGVkX18X2u4ytWKJn26jLo3LXxoJV5pm+5QqOz+2C1+IS6IV+rIwM5IaU934VSGRczrNzFuU5+4Mo2zXJT7Lx46/jKlbMekUUwXlzz8="]))
+        Authorization: "Bearer " + this.decode(this.randomSelect(["c2stWVpoak9pNTl0MVNvNnVWS1RFSE95ZnhmMXNWekl6ZHphSTg5UndIQk5HbkZHSUVw", "c2stZWR0MUlBZ2hyQU9TWlVQUzl4VzRTaG1TNW54bWlDbmFjQXFZQzc2VnJ2Q3JBemc5"]))
       }
     };
   }
@@ -32,13 +30,12 @@ class Api302Service {
     const randomIndex = Math.floor(Math.random() * apiKeys.length);
     return apiKeys[randomIndex];
   }
-  decode(teksTerenkripsi) {
-    const bytes = CryptoJS.AES.decrypt(teksTerenkripsi, apiConfig.PASSWORD);
-    const teksAsli = bytes.toString(CryptoJS.enc.Utf8);
-    if (!teksAsli) {
-      throw new Error("Dekripsi gagal: kunci salah atau data rusak");
+  decode(str) {
+    try {
+      return JSON.parse(Buffer.from(str, "base64").toString());
+    } catch {
+      return Buffer.from(str, "base64").toString();
     }
-    return teksAsli;
   }
   async _attemptReq(params, attempt = 1) {
     const {

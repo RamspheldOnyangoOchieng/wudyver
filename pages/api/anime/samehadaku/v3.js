@@ -379,6 +379,78 @@ class SamehadakuScraper {
       };
     }
   }
+  async fetchAjax(data) {
+    const url = `${this.base}/wp-admin/admin-ajax.php`;
+    const proxiedUrl = `${this.corsProxy}${url}`;
+    console.log(`[AJAX] Mengirim request ke: ${url}`);
+    const headers = {
+      ...this.headers,
+      accept: "*/*",
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      origin: this.base,
+      priority: "u=1, i",
+      referer: `${this.base}/`,
+      "sec-ch-ua": '"Chromium";v="127", "Not)A;Brand";v="99", "Microsoft Edge Simulate";v="127", "Lemur";v="127"',
+      "sec-ch-ua-arch": '""',
+      "sec-ch-ua-bitness": '""',
+      "sec-ch-ua-full-version": '"127.0.6533.144"',
+      "sec-ch-ua-full-version-list": '"Chromium";v="127.0.6533.144", "Not)A;Brand";v="99.0.0.0", "Microsoft Edge Simulate";v="127.0.6533.144", "Lemur";v="127.0.6533.144"',
+      "sec-ch-ua-mobile": "?1",
+      "sec-ch-ua-model": '"RMX3890"',
+      "sec-ch-ua-platform": '"Android"',
+      "sec-ch-ua-platform-version": '"15.0.0"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "x-requested-with": "XMLHttpRequest"
+    };
+    try {
+      const response = await axios.post(proxiedUrl, data, {
+        headers: headers,
+        timeout: 3e4
+      });
+      console.log(`[AJAX] Response status: ${response.status}`);
+      return response.data;
+    } catch (error) {
+      console.error(`[AJAX ERROR] Gagal mengirim request AJAX: ${error.message}`);
+      throw new Error(`Gagal mengambil data stream: ${error.message}`);
+    }
+  }
+  async stream({
+    id,
+    host: nume = 1,
+    ...rest
+  }) {
+    console.log(`[STREAM] Memproses stream untuk post: ${id}, host: ${nume}`);
+    try {
+      const data = {
+        action: "player_ajax",
+        post: id,
+        nume: nume,
+        type: "schtml",
+        ...rest
+      };
+      const response = await this.fetchAjax(data);
+      const $ = cheerio.load(response);
+      const iframeSrc = $("iframe").attr("src");
+      if (!iframeSrc) {
+        throw new Error("URL embed tidak ditemukan dalam response");
+      }
+      console.log(`[STREAM] Berhasil mendapatkan URL embed: ${iframeSrc}`);
+      return {
+        ok: true,
+        embedUrl: iframeSrc,
+        postId: id,
+        host: nume
+      };
+    } catch (e) {
+      console.error(`[STREAM] Error: ${e.message}`);
+      return {
+        ok: false,
+        error: e.message || "Terjadi kesalahan saat mengambil data stream"
+      };
+    }
+  }
 }
 export default async function handler(req, res) {
   const {
@@ -424,9 +496,17 @@ export default async function handler(req, res) {
         }
         response = await api.download(params);
         break;
+      case "stream":
+        if (!params.id) {
+          return res.status(400).json({
+            error: "Paramenter 'id' wajib diisi untuk action 'stream'."
+          });
+        }
+        response = await api.stream(params);
+        break;
       default:
         return res.status(400).json({
-          error: `Action tidak valid: ${action}. Action yang didukung: 'home', 'schedule', 'search', 'detail', dan 'download'.`
+          error: `Action tidak valid: ${action}. Action yang didukung: 'home', 'schedule', 'search', 'detail', 'stream', dan 'download'.`
         });
     }
     return res.status(200).json(response);

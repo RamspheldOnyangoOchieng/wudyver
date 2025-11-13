@@ -6,10 +6,8 @@ import {
   fileTypeFromBuffer
 } from "file-type";
 import fetch from "node-fetch";
-class FaceSwap {
-  constructor(sourceUrl, faceUrl) {
-    this.sourceUrl = sourceUrl;
-    this.faceUrl = faceUrl;
+class FaceSwapClient {
+  constructor() {
     this.headers = {
       Accept: "*/*",
       "X-Requested-With": "XMLHttpRequest",
@@ -53,10 +51,13 @@ class FaceSwap {
       throw err;
     }
   }
-  async generate() {
+  async generate({
+    source,
+    target
+  }) {
     try {
-      const sourceBuffer = await this.fetchBuffer(this.sourceUrl);
-      const faceBuffer = await this.fetchBuffer(this.faceUrl);
+      const sourceBuffer = await this.fetchBuffer(source);
+      const faceBuffer = await this.fetchBuffer(target);
       const sourceImage = await this.upload(sourceBuffer);
       const faceImage = await this.upload(faceBuffer);
       console.log("Requesting face generation...");
@@ -109,24 +110,19 @@ class FaceSwap {
   }
 }
 export default async function handler(req, res) {
-  const {
-    sourceUrl,
-    faceUrl
-  } = req.method === "GET" ? req.query : req.body;
-  if (!sourceUrl || !faceUrl) {
+  const params = req.method === "GET" ? req.query : req.body;
+  if (!params.source || !params.target) {
     return res.status(400).json({
-      error: "Missing sourceUrl or faceUrl"
+      error: "source and target images are required"
     });
   }
   try {
-    const faceSwap = new FaceSwap(sourceUrl, faceUrl);
-    const result = await faceSwap.generate();
-    return res.status(200).json({
-      result: result
-    });
-  } catch (err) {
+    const api = new FaceSwapClient();
+    const response = await api.generate(params);
+    return res.status(200).json(response);
+  } catch (error) {
     res.status(500).json({
-      error: "Face swap process failed."
+      error: error.message || "Internal Server Error"
     });
   }
 }

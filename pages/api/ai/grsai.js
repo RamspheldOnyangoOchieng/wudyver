@@ -1,15 +1,15 @@
 import fetch from "node-fetch";
 class GrsAI {
   constructor() {
-    this.baseUrl = "https://api.grsai.com";
+    this.baseUrls = ["https://api.grsai.com", "https://grsai.dakka.com.cn"];
+    this.currentBaseIndex = 0;
     this.apiKey = "sk-0204a3b3797e4e199f4708172918f02a";
     this.config = {
-      baseUrl: this.baseUrl,
       endpoint: {
         chat: "/v1/chat/completions",
         draw: "/v1/draw/completions",
-        nanoBanana: "/v1/draw/nano-banana",
-        soraVideo: "/v1/video/sora-video",
+        nano: "/v1/draw/nano-banana",
+        sora: "/v1/video/sora-video",
         veo: "/v1/video/veo",
         flux: "/v1/draw/flux",
         imagen: "/v1/draw/imagen",
@@ -24,7 +24,7 @@ class GrsAI {
       supported: {
         chat: ["nano-banana-fast", "nano-banana", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gpt-4o-all", "o4-mini-all", "gpt-4o-mini"],
         image: ["sora-image", "gpt-4o-image"],
-        nanoBanana: ["nano-banana"],
+        nano: ["nano-banana"],
         video: ["sora-2"],
         veo: ["veo3.1-fast", "veo3.1-pro", "veo3-fast", "veo3-pro"],
         flux: ["flux-pro-1.1", "flux-pro-1.1-ultra", "flux-kontext-pro", "flux-kontext-max"],
@@ -32,28 +32,63 @@ class GrsAI {
       }
     };
   }
+  async parseResponse(response) {
+    const text = await response.text();
+    if (text.trim().startsWith("data:")) {
+      try {
+        const lines = text.split("\n").filter(line => line.trim());
+        for (const line of lines) {
+          if (line.startsWith("data:")) {
+            const jsonStr = line.substring(5).trim();
+            if (jsonStr && jsonStr !== "[DONE]") {
+              return JSON.parse(jsonStr);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("⚠️ Failed to parse streaming data, trying full text parse");
+      }
+    }
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      console.error("❌ Failed to parse response:", text.substring(0, 200));
+      throw new Error(`Invalid JSON response: ${e.message}`);
+    }
+  }
   async req({
     endpoint,
     payload,
     method = "POST"
   }) {
-    try {
-      console.log("🚀 Starting request to:", endpoint);
-      const url = `${this.config.baseUrl}${endpoint}`;
-      const response = await fetch(url, {
-        method: method,
-        headers: this.config.defaultPayload.headers,
-        body: JSON.stringify(payload)
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    let lastError;
+    for (let i = 0; i < this.baseUrls.length; i++) {
+      const baseUrl = this.baseUrls[(this.currentBaseIndex + i) % this.baseUrls.length];
+      try {
+        console.log(`🚀 Starting request to: ${baseUrl}${endpoint}`);
+        const url = `${baseUrl}${endpoint}`;
+        const response = await fetch(url, {
+          method: method,
+          headers: this.config.defaultPayload.headers,
+          body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        console.log("✅ Request successful");
+        this.currentBaseIndex = (this.currentBaseIndex + i) % this.baseUrls.length;
+        return await this.parseResponse(response);
+      } catch (error) {
+        lastError = error;
+        console.warn(`⚠️ Base URL ${baseUrl} failed:`, error.message);
+        if (i < this.baseUrls.length - 1) {
+          console.log(`🔄 Trying fallback base URL...`);
+          continue;
+        }
       }
-      console.log("✅ Request successful");
-      return await response.json();
-    } catch (error) {
-      console.error("❌ Request failed:", error.message);
-      throw error;
     }
+    console.error("❌ All base URLs failed");
+    throw lastError;
   }
   async chat({
     prompt,
@@ -118,14 +153,14 @@ class GrsAI {
     try {
       console.log("🍌 Generating Nano Banana image...");
       const payload = {
-        model: this.config.supported.nanoBanana.includes(model) ? model : "nano-banana",
+        model: this.config.supported.nano.includes(model) ? model : "nano-banana",
         prompt: prompt || "A beautiful girl with long hair and blue eyes",
         aspectRatio: aspectRatio || "auto",
         urls: Array.isArray(urls) ? urls : [],
         ...rest
       };
       return await this.req({
-        endpoint: this.config.endpoint.nanoBanana,
+        endpoint: this.config.endpoint.nano,
         payload: payload
       });
     } catch (error) {
@@ -152,7 +187,7 @@ class GrsAI {
         ...rest
       };
       return await this.req({
-        endpoint: this.config.endpoint.soraVideo,
+        endpoint: this.config.endpoint.sora,
         payload: payload
       });
     } catch (error) {
