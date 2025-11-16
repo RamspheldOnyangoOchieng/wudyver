@@ -24,21 +24,24 @@ function getFilenameFromUrl(url) {
 }
 class Api302Service {
   constructor() {
+    this.apiKeys = ["c2stN1I1NTY5MHhVV2tRYVlUdk5XY1cxZGJHME02a3VmZG9QQmhqanFyREpRQ3RBZGdW", "c2stWVpoak9pNTl0MVNvNnVWS1RFSE95ZnhmMXNWekl6ZHphSTg5UndIQk5HbkZHSUVw", "c2stZWR0MUlBZ2hyQU9TWlVQUzl4VzRTaG1TNW54bWlDbmFjQXFZQzc2VnJ2Q3JBemc5"];
+    this.currentKeyIndex = 0;
     this.config = {
       endpoint: "https://api.302.ai",
       defaultHeaders: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: "Bearer " + this.decode(this.randomSelect(["c2stN1I1NTY5MHhVV2tRYVlUdk5XY1cxZGJHME02a3VmZG9QQmhqanFyREpRQ3RBZGdW", "c2stWVpoak9pNTl0MVNvNnVWS1RFSE95ZnhmMXNWekl6ZHphSTg5UndIQk5HbkZHSUVw", "c2stZWR0MUlBZ2hyQU9TWlVQUzl4VzRTaG1TNW54bWlDbmFjQXFZQzc2VnJ2Q3JBemc5"]))
+        Authorization: "Bearer " + this.decode(this.getCurrentKey())
       }
     };
   }
-  randomSelect(apiKeys) {
-    if (!apiKeys || apiKeys.length === 0) {
-      return null;
-    }
-    const randomIndex = Math.floor(Math.random() * apiKeys.length);
-    return apiKeys[randomIndex];
+  getCurrentKey() {
+    return this.apiKeys[this.currentKeyIndex];
+  }
+  rotateToNextKey() {
+    this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
+    this.config.defaultHeaders.Authorization = "Bearer " + this.decode(this.getCurrentKey());
+    console.log(`[API_KEY] Rotated to key index: ${this.currentKeyIndex}`);
   }
   decode(str) {
     try {
@@ -98,7 +101,7 @@ class Api302Service {
       filename: filename
     };
   }
-  async _attemptReq(params, attempt = 1) {
+  async _attemptReq(params, attempt = 1, originalKeyIndex = this.currentKeyIndex) {
     const {
       path,
       method,
@@ -121,13 +124,22 @@ class Api302Service {
       } else if (params.data) {
         options.body = JSON.stringify(params.data);
       }
-      console.log(`[API_REQ] ${method} ${url} (Attempt ${attempt})`);
+      console.log(`[API_REQ] ${method} ${url} (Attempt ${attempt}, Key: ${this.currentKeyIndex})`);
       response = await fetch(url, options);
       responseText = await response.text();
       if (!response.ok) {
+        if (response.status === 401 && attempt < MAX_ATTEMPTS) {
+          console.log(`[API_KEY] Key ${this.currentKeyIndex} failed with 401, rotating to next key`);
+          this.rotateToNextKey();
+          if (this.currentKeyIndex === originalKeyIndex) {
+            throw new Error(`Semua API key gagal: HTTP ${response.status}: ${responseText}`);
+          }
+          await sleep(attempt * 1e3);
+          return await this._attemptReq(params, attempt + 1, originalKeyIndex);
+        }
         if (response.status >= 500 && attempt < MAX_ATTEMPTS) {
           await sleep(attempt * 1e3);
-          return await this._attemptReq(params, attempt + 1);
+          return await this._attemptReq(params, attempt + 1, originalKeyIndex);
         }
         throw new Error(`HTTP ${response.status}: ${responseText}`);
       }
@@ -140,9 +152,19 @@ class Api302Service {
       }
     } catch (error) {
       const isNetwork = /fetch|ECONN|EHOST/.test(error.message);
+      const isAuth = error.message.includes("401") || error.message.includes("Unauthorized");
+      if (isAuth && attempt < MAX_ATTEMPTS && this.currentKeyIndex !== originalKeyIndex) {
+        console.log(`[API_KEY] Auth error, rotating to next key`);
+        this.rotateToNextKey();
+        if (this.currentKeyIndex === originalKeyIndex) {
+          throw new Error(`Semua API key gagal: ${error.message}`);
+        }
+        await sleep(attempt * 1e3);
+        return await this._attemptReq(params, attempt + 1, originalKeyIndex);
+      }
       if (isNetwork && attempt < MAX_ATTEMPTS) {
         await sleep(attempt * 1e3);
-        return await this._attemptReq(params, attempt + 1);
+        return await this._attemptReq(params, attempt + 1, originalKeyIndex);
       }
       throw error;
     }

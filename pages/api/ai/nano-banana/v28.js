@@ -1,175 +1,279 @@
 import axios from "axios";
 import FormData from "form-data";
-import crypto from "crypto";
-const serviceConfig = {
-  baseUrl: "https://new-maketoon-754894832194.europe-west1.run.app",
-  endpoints: {
-    img2img: "/transform_replicate",
-    text2img: "/text_to_image"
-  },
-  payload: {
-    model: "replicate",
-    style: "anime",
-    prompt: "",
-    user_tier: "free",
-    remove_watermark: "false",
-    priority: "",
-    name: "",
-    accessories: "",
-    background_color: "",
-    custom_prompt: ""
-  }
+import https from "https";
+const LOGIN_URL = "https://www.vidguru.ai/cgi-bin/login";
+const UPLOAD_URL = "https://www.vidguru.ai/cgi-bin/auth/aigc/vidguru/upload";
+const PROXY_URL = "https://www.vidguru.ai/cgi-bin/aigc/proxy";
+const TASK_URL = "https://www.vidguru.ai/cgi-bin/auth/aigc/vidguru/vtask-get";
+const HEADERS = {
+  accept: "application/json",
+  "accept-language": "id-ID",
+  "content-type": "application/x-www-form-urlencoded;charset=utf-8",
+  origin: "https://www.vidguru.ai",
+  referer: "https://www.vidguru.ai/profile",
+  "sec-ch-ua": '"Chromium";v="127", "Not)A;Brand";v="99", "Microsoft Edge Simulate";v="127", "Lemur";v="127"',
+  "sec-ch-ua-mobile": "?1",
+  "sec-ch-ua-platform": '"Android"',
+  "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
 };
-class MakeToon {
-  constructor(baseUrl) {
-    this.config = {
-      ...serviceConfig,
-      baseUrl: baseUrl ?? serviceConfig.baseUrl
-    };
+
+function randomCode(length = 40) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  l = (...args) => console.log("[StyleConv]", ...args);
-  async styles() {
+  return result;
+}
+class VidGuru {
+  constructor() {
+    this.client = axios.create({
+      headers: {
+        ...HEADERS
+      },
+      httpsAgent: new https.Agent({
+        rejectUnauthorized: false
+      })
+    });
+    this.ticket = null;
+    this.uid = null;
+    this.cookie = null;
+    this.logged = false;
+  }
+  log(...args) {
+    console.log("[VidGuru]", ...args);
+  }
+  async login() {
+    if (this.logged) {
+      this.log("Already logged in");
+      return {
+        ticket: this.ticket,
+        uid: this.uid,
+        cookie: this.cookie
+      };
+    }
     try {
-      const response = await axios.get("https://api.thekmobile.com/services.json");
-      return response.data.styles || this.getFallbackStyles();
+      const code = randomCode();
+      this.log("Login with code:", code);
+      const response = await this.client.post(LOGIN_URL, `type=0&code=${code}&vid=`);
+      if (response.data?.code !== 0) {
+        throw new Error(response.data?.message || "Login failed");
+      }
+      const {
+        ticket,
+        uid,
+        remain,
+        name
+      } = response.data.data || {};
+      this.ticket = ticket;
+      this.uid = uid;
+      this.cookie = `ticket=${ticket}; uid=${uid}`;
+      this.logged = true;
+      this.client.defaults.headers.cookie = this.cookie;
+      this.log("Login success:", name, "UID:", uid, "Remain:", remain);
+      return {
+        ticket: ticket,
+        uid: uid,
+        remain: remain,
+        name: name,
+        cookie: this.cookie
+      };
     } catch (error) {
-      this.l("Error fetching styles, using fallback:", error.message);
-      return this.getFallbackStyles();
+      this.log("Login error:", error.message);
+      throw error;
     }
   }
-  getFallbackStyles() {
-    return ["anime", "shonen", "comic", "game", "clay", "stock", "90s"];
+  async ensureLogin() {
+    if (!this.logged) await this.login();
   }
-  async i(imageUrl) {
+  async upload(file) {
+    await this.ensureLogin();
+    const form = new FormData();
+    let buffer, mime = "image/jpeg",
+      filename = "image.jpg";
     try {
-      this.l("Processing image input...");
-      if (Buffer.isBuffer(imageUrl)) {
-        this.l("Input: Buffer");
-        return imageUrl;
+      if (Buffer.isBuffer(file)) {
+        buffer = file;
+      } else if (typeof file === "string") {
+        if (file.startsWith("http")) {
+          this.log("Fetch URL:", file);
+          const {
+            data,
+            headers
+          } = await this.client.get(file, {
+            responseType: "arraybuffer"
+          });
+          buffer = data;
+          mime = headers["content-type"] || mime;
+          filename = (file.split("/").pop() || filename).split("?")[0];
+        } else if (file.startsWith("data:")) {
+          const [meta, b64] = file.split(",");
+          mime = meta.match(/:(.*?);/)?.[1] || mime;
+          buffer = Buffer.from(b64, "base64");
+          filename = `image.${mime.split("/")[1] || "jpg"}`;
+        } else {
+          throw new Error("Unsupported file input");
+        }
+      } else {
+        throw new Error("Invalid file");
       }
-      if (typeof imageUrl === "string" && imageUrl.startsWith("data:")) {
-        this.l("Input: Base64");
-        const b64 = imageUrl.split(",")[1];
-        return Buffer.from(b64, "base64");
+      form.append("file", buffer, {
+        filename: filename,
+        contentType: mime
+      });
+      this.log("Uploading:", filename);
+      const {
+        data
+      } = await this.client.post(UPLOAD_URL, form, {
+        headers: {
+          ...form.getHeaders(),
+          cookie: this.cookie
+        }
+      });
+      if (data?.code !== 0) throw new Error(data?.message || "Upload failed");
+      this.log("Upload success:", data.data?.file_url);
+      return data.data?.file_url;
+    } catch (error) {
+      this.log("Upload error:", error.message);
+      throw error;
+    }
+  }
+  async uploadImages(imageUrl) {
+    const urls = Array.isArray(imageUrl) ? imageUrl : [imageUrl];
+    const uploaded = [];
+    try {
+      for (const url of urls) {
+        const result = await this.upload(url);
+        uploaded.push(result);
+        this.log("Uploaded:", result);
       }
-      if (typeof imageUrl === "string" && imageUrl.startsWith("http")) {
-        this.l("Input: URL → downloading...");
+      return uploaded;
+    } catch (error) {
+      this.log("Upload images error:", error.message);
+      throw error;
+    }
+  }
+  async pollTask(taskId, taskType = "209", delay = 3e3) {
+    while (true) {
+      try {
+        this.log("Check task:", taskId, "type:", taskType);
         const {
           data
-        } = await axios.get(imageUrl, {
-          responseType: "arraybuffer"
+        } = await this.client.post(TASK_URL, {
+          task_id: taskId,
+          task_type: taskType
+        }, {
+          headers: {
+            "content-type": "application/json",
+            cookie: this.cookie
+          }
         });
-        return Buffer.from(data);
+        if (data?.code !== 0) throw new Error(data?.message);
+        const task = data.data?.task || {};
+        const result = task?.result_json ? JSON.parse(task.result_json) : {};
+        if (result.status === "completed" || task?.state === "1") {
+          this.log("Task completed");
+          return result;
+        }
+        if (result.status === "failed" || task?.state === "2") {
+          throw new Error(result.message || "Task failed");
+        }
+        this.log(`Progress: ${task?.progress || 0}% - Waiting ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } catch (error) {
+        this.log("Poll error:", error.message);
+        throw error;
       }
-      throw new Error("imageUrl must be URL, base64, or Buffer");
-    } catch (e) {
-      this.l("Image input error:", e.message);
-      throw e;
+    }
+  }
+  async submitTask(params, eventType) {
+    await this.ensureLogin();
+    try {
+      const paramJson = JSON.stringify(params);
+      this.log("Submit task event:", eventType);
+      const {
+        data
+      } = await this.client.post(PROXY_URL, {
+        event_type: eventType,
+        param_json: paramJson
+      }, {
+        headers: {
+          "content-type": "application/json",
+          cookie: this.cookie
+        }
+      });
+      if (data?.code !== 0) throw new Error(data?.message);
+      const result = JSON.parse(data.data?.result_json || "{}");
+      const taskId = result.task_id;
+      if (!taskId) throw new Error("No task ID");
+      this.log("Task ID:", taskId);
+      return taskId;
+    } catch (error) {
+      this.log("Submit task error:", error.message);
+      throw error;
     }
   }
   async generate({
-    model,
-    style,
     prompt,
     imageUrl,
-    isProUser = true,
+    size = "1K",
+    aspect_ratio = "1:1",
+    output_format = "png",
     ...rest
   }) {
-    const userId = crypto.randomUUID();
-    const isImg2Img = !!imageUrl;
-    const endpoint = isImg2Img ? this.config.endpoints.img2img : this.config.endpoints.text2img;
-    const url = `${this.config.baseUrl}${endpoint}`;
-    this.l(`Mode: ${isImg2Img ? "Image-to-Image" : "Text-to-Image"}`);
-    this.l("Random User ID:", userId);
-    this.l("Endpoint:", endpoint);
-    const form = new FormData();
     try {
-      const defaults = this.config.payload;
-      const fields = {
-        ...defaults,
+      await this.ensureLogin();
+      const isImg2Img = !!imageUrl;
+      const eventType = isImg2Img ? "11" : "12";
+      const taskType = isImg2Img ? "209" : "204";
+      this.log(`Start ${isImg2Img ? "img2img" : "txt2img"}`);
+      const imageInput = isImg2Img ? await this.uploadImages(imageUrl) : [];
+      const params = {
+        model: "nano-banana",
+        prompt: prompt,
+        size: size,
+        aspect_ratio: isImg2Img ? "match_input_image" : aspect_ratio,
+        output_format: output_format,
+        image_input: imageInput,
         ...rest
       };
-      if (model !== undefined) fields.model = model;
-      if (style !== undefined) fields.style = style;
-      if (prompt !== undefined) fields.prompt = prompt;
-      form.append("prompt", fields.prompt);
-      form.append("model", fields.model);
-      form.append("user_id", userId);
-      if (isImg2Img) {
-        const imgBuffer = await this.i(imageUrl);
-        const ext = typeof imageUrl === "string" && imageUrl.split(".").pop()?.split("?")[0] || "jpg";
-        const filename = `input.${ext}`;
-        form.append("image", imgBuffer, {
-          filename: filename
-        });
-        this.l("Image attached:", filename, imgBuffer.length, "bytes");
-      }
-      form.append("style", fields.style);
-      form.append("user_tier", fields.user_tier);
-      form.append("remove_watermark", isProUser ? "true" : fields.remove_watermark);
-      if (isProUser) {
-        form.append("priority", "high");
-      } else if (fields.priority && fields.priority.toString().length > 0) {
-        form.append("priority", fields.priority.toString());
-      }
-      ["name", "accessories", "background_color", "custom_prompt"].forEach(k => {
-        const val = fields[k];
-        if (val && val.toString().length > 0) {
-          form.append(k, val.toString());
-        }
+      this.log("Params:", {
+        ...params,
+        image_input: imageInput.length
       });
-      this.l("Sending request...");
-      const res = await axios.post(url, form, {
-        headers: form.getHeaders(),
-        timeout: 18e4,
-        maxBodyLength: Infinity
-      });
-      this.l("API raw response:", res.data);
-      return res.data;
-    } catch (e) {
-      const err = e.response?.data || {
-        error: e.message
-      };
-      this.l("API error:", err);
-      throw err;
+      const taskId = await this.submitTask(params, eventType);
+      const result = await this.pollTask(taskId, taskType);
+      this.log("Generate success, images:", result.images?.length || 0);
+      return result;
+    } catch (error) {
+      this.log("Generate error:", error.message);
+      throw error;
     }
+  }
+  async getAccount() {
+    await this.ensureLogin();
+    return {
+      uid: this.uid,
+      ticket: this.ticket,
+      cookie: this.cookie
+    };
   }
 }
 export default async function handler(req, res) {
-  const {
-    action,
-    ...params
-  } = req.method === "GET" ? req.query : req.body;
-  if (!action) {
+  const params = req.method === "GET" ? req.query : req.body;
+  if (!params.prompt) {
     return res.status(400).json({
-      error: "Parameter 'action' wajib diisi."
+      error: "Parameter 'prompt' diperlukan"
     });
   }
-  const api = new MakeToon();
+  const api = new VidGuru();
   try {
-    let response;
-    switch (action) {
-      case "generate":
-        if (!params.prompt && !params.imageUrl) {
-          return res.status(400).json({
-            error: "Parameter 'prompt' atau 'imageUrl' wajib diisi untuk action 'generate'."
-          });
-        }
-        response = await api.generate(params);
-        break;
-      case "styles":
-        response = await api.styles();
-        break;
-      default:
-        return res.status(400).json({
-          error: `Action tidak valid: ${action}. Action yang didukung: 'generate' dan 'styles'.`
-        });
-    }
-    return res.status(200).json(response);
+    const data = await api.generate(params);
+    return res.status(200).json(data);
   } catch (error) {
-    console.error(`[FATAL ERROR] Kegagalan pada action '${action}':`, error);
+    const errorMessage = error.message || "Terjadi kesalahan saat memproses.";
     return res.status(500).json({
-      error: error.message || "Terjadi kesalahan internal pada server."
+      error: errorMessage
     });
   }
 }

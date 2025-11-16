@@ -5,7 +5,9 @@ class TeraboxDownloader {
     this.apiHost = "terabox-downloader-direct-download-link-generator.p.rapidapi.com";
     this.baseUrl = `https://${this.apiHost}/fetch`;
   }
-  async download({ url }) {
+  async download({
+    url
+  }) {
     for (const apiKey of this.apiKeys) {
       try {
         const response = await axios.post(this.baseUrl, {

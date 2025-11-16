@@ -168,7 +168,7 @@ class InsMelo {
       console.log(`[GENERATE] task_id dibuat: ${task_id}`);
       return {
         task_id: task_id,
-        ...response.data,
+        ...response.data
       };
     }
     return response;

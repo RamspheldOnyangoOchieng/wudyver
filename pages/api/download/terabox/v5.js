@@ -68,7 +68,9 @@ class TeraboxDownloader {
       return this.handleError(error);
     }
   }
-  async download({ url }) {
+  async download({
+    url
+  }) {
     if (!url || typeof url !== "string" || url.trim() === "") {
       return {
         status: "error",

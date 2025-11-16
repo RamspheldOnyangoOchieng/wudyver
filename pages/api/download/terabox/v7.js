@@ -9,7 +9,9 @@ import {
   FormData
 } from "formdata-node";
 class TeraboxDownloader {
-  constructor({ host: hostIndex = 1}) {
+  constructor({
+    host: hostIndex = 1
+  }) {
     this.hosts = ["teradownloaderr.com", "teraboxlinkdownloader.com", "teraboxdownloaders.net"];
     this.selectedHost = this.hosts[hostIndex] || this.hosts[1];
     this.baseUrl = `https://${this.selectedHost}/wp-admin/admin-ajax.php`;
@@ -28,7 +30,9 @@ class TeraboxDownloader {
       "x-requested-with": "XMLHttpRequest"
     };
   }
-  async download({ url: teraboxUrl }) {
+  async download({
+    url: teraboxUrl
+  }) {
     try {
       const formData = new FormData();
       formData.append("action", "terabox_download");

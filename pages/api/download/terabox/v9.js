@@ -27,7 +27,9 @@ class TeraboxDownloader {
       withCredentials: true
     }));
   }
-  async download({ url }) {
+  async download({
+    url
+  }) {
     try {
       const {
         data

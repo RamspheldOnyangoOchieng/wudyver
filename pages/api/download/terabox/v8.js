@@ -109,7 +109,9 @@ class TeraboxDownloader {
       throw new Error(`Error di getFileList: ${error.message}`);
     }
   }
-  async download({ url: sUrl }) {
+  async download({
+    url: sUrl
+  }) {
     try {
       const shortUrl = await this.getSurl(sUrl);
       const fileInfo = await this.getFileList(shortUrl);

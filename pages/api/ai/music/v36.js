@@ -13,22 +13,25 @@ function getAgent(url) {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 class Api302Service {
   constructor() {
+    this.apiKeys = ["c2stN1I1NTY5MHhVV2tRYVlUdk5XY1cxZGJHME02a3VmZG9QQmhqanFyREpRQ3RBZGdW", "c2stWVpoak9pNTl0MVNvNnVWS1RFSE95ZnhmMXNWekl6ZHphSTg5UndIQk5HbkZHSUVw", "c2stZWR0MUlBZ2hyQU9TWlVQUzl4VzRTaG1TNW54bWlDbmFjQXFZQzc2VnJ2Q3JBemc5"];
+    this.currentKeyIndex = 0;
     this.config = {
       endpoint: "https://api.302.ai",
       basePath: "/suno",
       defaultHeaders: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: "Bearer " + this.decode(this.randomSelect(["c2stN1I1NTY5MHhVV2tRYVlUdk5XY1cxZGJHME02a3VmZG9QQmhqanFyREpRQ3RBZGdW", "c2stWVpoak9pNTl0MVNvNnVWS1RFSE95ZnhmMXNWekl6ZHphSTg5UndIQk5HbkZHSUVw", "c2stZWR0MUlBZ2hyQU9TWlVQUzl4VzRTaG1TNW54bWlDbmFjQXFZQzc2VnJ2Q3JBemc5"]))
+        Authorization: "Bearer " + this.decode(this.getCurrentKey())
       }
     };
   }
-  randomSelect(apiKeys) {
-    if (!apiKeys || apiKeys.length === 0) {
-      return null;
-    }
-    const randomIndex = Math.floor(Math.random() * apiKeys.length);
-    return apiKeys[randomIndex];
+  getCurrentKey() {
+    return this.apiKeys[this.currentKeyIndex];
+  }
+  rotateToNextKey() {
+    this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
+    this.config.defaultHeaders.Authorization = "Bearer " + this.decode(this.getCurrentKey());
+    console.log(`[API_KEY] Rotated to key index: ${this.currentKeyIndex}`);
   }
   decode(str) {
     try {
@@ -37,7 +40,7 @@ class Api302Service {
       return Buffer.from(str, "base64").toString();
     }
   }
-  async _attemptReq(params, attempt = 1) {
+  async _attemptReq(params, attempt = 1, originalKeyIndex = this.currentKeyIndex) {
     const {
       path,
       method
@@ -56,15 +59,25 @@ class Api302Service {
       if (params.data && (method === "POST" || method === "PUT")) {
         options.body = JSON.stringify(params.data);
       }
-      console.log(`[API_REQ] (Attempt ${attempt}/${MAX_ATTEMPTS}) ${method} ${url}`);
+      console.log(`[API_REQ] (Attempt ${attempt}/${MAX_ATTEMPTS}) ${method} ${url} (Key: ${this.currentKeyIndex})`);
       response = await fetch(url, options);
       responseText = await response.text();
       console.log(`[API_RES] Status: ${response.status} for ${path}`);
       if (!response.ok) {
+        if (response.status === 401 && attempt < MAX_ATTEMPTS) {
+          console.warn(`[API_KEY] Key ${this.currentKeyIndex} failed with 401, rotating to next key`);
+          this.rotateToNextKey();
+          if (this.currentKeyIndex === originalKeyIndex) {
+            throw new Error(`Semua API key gagal: HTTP ${response.status}: ${responseText}`);
+          }
+          console.warn(`[RETRY] Authentication error. Retrying with new key in ${attempt}s...`);
+          await sleep(attempt * 1e3);
+          return await this._attemptReq(params, attempt + 1, originalKeyIndex);
+        }
         if (response.status >= 500 && attempt < MAX_ATTEMPTS) {
           console.warn(`[RETRY] Server error ${response.status}. Retrying in ${attempt}s...`);
           await sleep(attempt * 1e3);
-          return await this._attemptReq(params, attempt + 1);
+          return await this._attemptReq(params, attempt + 1, originalKeyIndex);
         }
         throw new Error(`HTTP ${response.status}: ${responseText}`);
       }
@@ -78,10 +91,21 @@ class Api302Service {
       }
     } catch (error) {
       const isNetworkError = !response || /fetch|ECONN|EHOST/.test(error.message);
+      const isAuthError = error.message.includes("401") || error.message.includes("Unauthorized");
+      if (isAuthError && attempt < MAX_ATTEMPTS && this.currentKeyIndex !== originalKeyIndex) {
+        console.warn(`[API_KEY] Auth error detected, rotating to next key`);
+        this.rotateToNextKey();
+        if (this.currentKeyIndex === originalKeyIndex) {
+          throw new Error(`Semua API key gagal: ${error.message}`);
+        }
+        console.warn(`[RETRY] Authentication error. Retrying with new key in ${attempt}s...`);
+        await sleep(attempt * 1e3);
+        return await this._attemptReq(params, attempt + 1, originalKeyIndex);
+      }
       if (isNetworkError && attempt < MAX_ATTEMPTS) {
         console.warn(`[RETRY] Network error. Retrying in ${attempt}s...`);
         await sleep(attempt * 1e3);
-        return await this._attemptReq(params, attempt + 1);
+        return await this._attemptReq(params, attempt + 1, originalKeyIndex);
       }
       console.error(`[API_FAIL] Final failure for ${path}: ${error.message}`);
       throw error;
