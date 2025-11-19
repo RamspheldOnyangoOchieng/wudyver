@@ -28,15 +28,46 @@ class GeminiChat {
     const token = Buffer.from(`${crypto.randomBytes(32).toString("hex")}@${Date.now()}`).toString("base64");
     return token;
   }
-  async uploadFromUrl(imageUrl, filename = "image.jpg") {
+  async uploadFromUrl(input, filename = "image.jpg") {
+    const DEFAULT_BASE64_MIMETYPE = "image/jpeg";
+    let buffer;
+    let mimeType = DEFAULT_BASE64_MIMETYPE;
+    if (input instanceof Buffer) {
+      buffer = input;
+    } else if (typeof input === "string") {
+      if (input.startsWith("data:")) {
+        const match = input.match(/^data:(image\/[a-z0-9\+\-\.]+);base64,(.*)$/i);
+        if (!match || match.length !== 3) {
+          throw new Error("Invalid Base64 Data URL format.");
+        }
+        mimeType = match[1];
+        buffer = Buffer.from(match[2], "base64");
+        if (!mimeType.startsWith("image/")) {
+          throw new Error(`Invalid MIME type in Base64 Data URL: ${mimeType}`);
+        }
+      } else {
+        try {
+          const response = await axios.get(input, {
+            responseType: "arraybuffer",
+            timeout: 1e4
+          });
+          buffer = response.data;
+          mimeType = response.headers["content-type"] || DEFAULT_BASE64_MIMETYPE;
+          if (!mimeType.startsWith("image/")) {
+            throw new Error(`Invalid MIME type fetched from URL: ${mimeType}`);
+          }
+        } catch (error) {
+          if (error.code === "ERR_INVALID_URL" || error.message.includes("Failed to fetch") || error.message.includes("timeout")) {
+            buffer = Buffer.from(input, "base64");
+          } else {
+            throw new Error(`Failed to process input as URL or Base64: ${error.message}`);
+          }
+        }
+      }
+    } else {
+      throw new Error(`Invalid image input type. Expected URL (string), Base64 (string), or Buffer.`);
+    }
     try {
-      const {
-        data: buffer,
-        headers: resHeaders
-      } = await axios.get(imageUrl, {
-        responseType: "arraybuffer"
-      });
-      const mimeType = resHeaders["content-type"] || "image/jpeg";
       const form = new FormData();
       form.append("file", new Blob([JSON.stringify({
         file: {
@@ -49,13 +80,14 @@ class GeminiChat {
       form.append("file", new Blob([buffer], {
         type: mimeType
       }), filename);
+      const headers = form.getHeaders ? form.getHeaders() : form.headers;
       const res = await axios.post(this.uploadUrl, form, {
         headers: {
           ...this.headers,
-          ...form.headers
+          ...headers
         }
       });
-      if (!res.data?.file?.uri) throw new Error("Upload gagal");
+      if (!res.data?.file?.uri) throw new Error("Upload gagal: URI tidak ditemukan");
       const uri = res.data.file.uri;
       console.log("[file uri]", uri);
       return {

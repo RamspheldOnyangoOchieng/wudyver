@@ -13,24 +13,18 @@ class NewOCR {
       Referer: "https://www.newocr.com/"
     };
   }
-  async ocr({
-    url,
-    ...payload
-  }) {
+  async processImage(input, options = {}) {
     try {
-      const {
-        contentType,
-        ext
-      } = await this.getFileInfo(url);
-      const {
-        data: fileBuffer
-      } = await axios.get(url, {
-        responseType: "arraybuffer"
-      });
+      const isBuffer = Buffer.isBuffer(input);
+      const isBase64 = typeof input === "string" && input.startsWith("data:");
+      const isUrl = typeof input === "string" && (input.startsWith("http://") || input.startsWith("https://"));
+      const imageData = isBuffer ? await this.processBuffer(input, options) : isBase64 ? await this.processBase64(input) : isUrl ? await this.processUrl(input) : (() => {
+        throw new Error("Unsupported input type");
+      })();
       const form = new FormData();
-      form.append("userfile", new Blob([fileBuffer], {
-        type: contentType
-      }), `file.${ext}`);
+      form.append("userfile", new Blob([imageData.buffer], {
+        type: imageData.contentType
+      }), imageData.filename);
       form.append("preview", "1");
       const {
         data: uploadHTML
@@ -41,7 +35,7 @@ class NewOCR {
         }
       });
       const ocrPayload = await this.extractOCRPayload(uploadHTML);
-      Object.assign(ocrPayload, payload, {
+      Object.assign(ocrPayload, options, {
         ocr: "1"
       });
       const ocrForm = new FormData();
@@ -59,18 +53,37 @@ class NewOCR {
       throw new Error(`OCR failed: ${error.message}`);
     }
   }
-  async getFileInfo(url) {
-    try {
-      const {
-        headers
-      } = await axios.head(url);
-      return {
-        contentType: headers["content-type"],
-        ext: headers["content-type"].split("/")[1]
-      };
-    } catch (error) {
-      throw new Error(`Failed to fetch file info: ${error.message}`);
-    }
+  async processUrl(url) {
+    const {
+      data: fileBuffer,
+      headers
+    } = await axios.get(url, {
+      responseType: "arraybuffer"
+    });
+    const ext = headers["content-type"]?.split("/")[1] || "jpg";
+    return {
+      buffer: Buffer.from(fileBuffer),
+      contentType: headers["content-type"] || "image/jpeg",
+      filename: `file.${ext}`
+    };
+  }
+  async processBase64(base64String) {
+    const base64Data = base64String.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, "base64");
+    const contentType = base64String.startsWith("data:image/png") ? "image/png" : base64String.startsWith("data:image/gif") ? "image/gif" : base64String.startsWith("data:image/webp") ? "image/webp" : "image/jpeg";
+    const extension = contentType.split("/")[1];
+    return {
+      buffer: buffer,
+      contentType: contentType,
+      filename: `file.${extension}`
+    };
+  }
+  async processBuffer(buffer, options = {}) {
+    return {
+      buffer: buffer,
+      contentType: options.contentType || "image/jpeg",
+      filename: options.filename || "file.jpg"
+    };
   }
   async extractOCRPayload(html) {
     try {
@@ -78,7 +91,7 @@ class NewOCR {
       const payload = {};
       $("#form-ocr input, #form-ocr select").each((_, el) => {
         const name = $(el).attr("name");
-        if (name) payload[name] = $(el).val() || "";
+        name && (payload[name] = $(el).val() || "");
       });
       return payload;
     } catch (error) {
@@ -95,20 +108,16 @@ class NewOCR {
   }
 }
 export default async function handler(req, res) {
-  const {
-    url,
-    ...params
-  } = req.method === "GET" ? req.query : req.body;
-  if (!url) {
-    return res.status(400).json({
-      error: "Url is required"
-    });
-  }
-  const ocr = new NewOCR();
+  const params = req.method === "GET" ? req.query : req.body;
+  !params.image && res.status(400).json({
+    error: "Image is required"
+  });
   try {
-    const data = await ocr.ocr({
-      url: url,
-      ...params
+    const ocr = new NewOCR();
+    const data = await ocr.processImage(params.image, {
+      ...params,
+      contentType: params.contentType,
+      filename: params.filename
     });
     return res.status(200).json({
       text: data

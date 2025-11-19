@@ -7,20 +7,17 @@ class VheerService {
   constructor() {
     this.url = "https://vheer.com/app/image-to-text";
   }
-  async ocr({
-    url,
-    lang = "ENG"
-  }) {
+  async processImage(input, options = {}) {
     try {
-      const {
-        data: fileBuffer,
-        headers
-      } = await axios.get(url, {
-        responseType: "arraybuffer"
-      });
-      const base64Image = Buffer.from(fileBuffer).toString("base64");
+      const lang = options.lang || "ENG";
+      const isBuffer = Buffer.isBuffer(input);
+      const isBase64 = typeof input === "string" && input.startsWith("data:");
+      const isUrl = typeof input === "string" && (input.startsWith("http://") || input.startsWith("https://"));
+      const imageData = isBuffer ? await this.processBuffer(input, options) : isBase64 ? await this.processBase64(input) : isUrl ? await this.processUrl(input) : (() => {
+        throw new Error("Unsupported input type");
+      })();
       const form = new FormData();
-      form.append("1_imageBase64", `data:${headers["content-type"]};base64,${base64Image}`);
+      form.append("1_imageBase64", imageData.base64);
       form.append("1_languageIndex", lang);
       form.append("0", `["$K1","${this.randomString(10)}"]`);
       const {
@@ -41,20 +38,55 @@ class VheerService {
       throw new Error(`Error: ${error.message}`);
     }
   }
+  async processUrl(url) {
+    const {
+      data: fileBuffer,
+      headers
+    } = await axios.get(url, {
+      responseType: "arraybuffer"
+    });
+    const contentType = headers["content-type"] || "image/jpeg";
+    const base64Image = Buffer.from(fileBuffer).toString("base64");
+    return {
+      base64: `data:${contentType};base64,${base64Image}`,
+      buffer: Buffer.from(fileBuffer),
+      contentType: contentType
+    };
+  }
+  async processBase64(base64String) {
+    const buffer = base64String.startsWith("data:") ? Buffer.from(base64String.replace(/^data:image\/\w+;base64,/, ""), "base64") : Buffer.from(base64String, "base64");
+    const contentType = base64String.startsWith("data:image/png") ? "image/png" : base64String.startsWith("data:image/gif") ? "image/gif" : base64String.startsWith("data:image/webp") ? "image/webp" : "image/jpeg";
+    const base64Data = base64String.startsWith("data:") ? base64String : `data:${contentType};base64,${base64String}`;
+    return {
+      base64: base64Data,
+      buffer: buffer,
+      contentType: contentType
+    };
+  }
+  async processBuffer(buffer, options = {}) {
+    const contentType = options.contentType || "image/jpeg";
+    const base64Image = buffer.toString("base64");
+    return {
+      base64: `data:${contentType};base64,${base64Image}`,
+      buffer: buffer,
+      contentType: contentType
+    };
+  }
   randomString(length) {
     return crypto.randomBytes(length).toString("hex").slice(0, length);
   }
 }
 export default async function handler(req, res) {
   const params = req.method === "GET" ? req.query : req.body;
-  if (!params.url) {
-    return res.status(400).json({
-      error: "Url is required"
-    });
-  }
-  const ocr = new VheerService();
+  !params.image && res.status(400).json({
+    error: "Image is required"
+  });
   try {
-    const data = await ocr.ocr(params);
+    const ocr = new VheerService();
+    const data = await ocr.processImage(params.image, {
+      lang: params.lang,
+      contentType: params.contentType
+    });
     return res.status(200).json({
       result: data
     });

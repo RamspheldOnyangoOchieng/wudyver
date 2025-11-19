@@ -53,67 +53,77 @@ class DecopyOCRService {
       throw error;
     }
   }
-  async processImage({
-    url
-  }) {
-    if (!url) {
-      throw new Error("Image URL is required for OCR.");
-    }
-    if (!this.cookies) {
-      console.log("Cookies not found, fetching them automatically...");
-      try {
-        await this.getCookies();
-        console.log("Cookies fetched automatically:", this.cookies);
-      } catch (cookieError) {
-        console.error("Failed to automatically fetch cookies:", cookieError.message);
-        throw new Error("Failed to obtain necessary cookies for OCR process.");
-      }
-    }
+  async processImage(input, options = {}) {
+    if (!input) throw new Error("Image input is required");
+    !this.cookies && await this.getCookies();
     try {
-      const imageResponse = await axios.get(url, {
-        responseType: "arraybuffer"
-      });
-      const imageBuffer = Buffer.from(imageResponse.data);
-      const contentType = imageResponse.headers["content-type"] || "image/jpeg";
-      const filename = url.substring(url.lastIndexOf("/") + 1) || "image.jpg";
+      const isBuffer = Buffer.isBuffer(input);
+      const isBase64 = typeof input === "string" && input.startsWith("data:");
+      const isUrl = typeof input === "string" && (input.startsWith("http://") || input.startsWith("https://"));
+      const imageData = isBuffer ? await this.processBuffer(input, options) : isBase64 ? await this.processBase64(input) : isUrl ? await this.processUrl(input) : (() => {
+        throw new Error("Unsupported input type");
+      })();
       const formData = new FormData();
-      formData.append("upload_images", imageBuffer, {
-        filename: filename,
-        contentType: contentType
+      formData.append("upload_images", imageData.buffer, {
+        filename: imageData.filename,
+        contentType: imageData.contentType
       });
       const requestHeaders = {
-        ...formData.getHeaders()
+        ...formData.getHeaders(),
+        ...this.cookies && {
+          Cookie: this.cookies
+        }
       };
-      if (this.cookies) {
-        requestHeaders["Cookie"] = this.cookies;
-      }
       const response = await this.axiosInstance.post("image-to-text/create-job", formData, {
         headers: requestHeaders
       });
       return response.data?.result;
     } catch (error) {
       console.error("Error during OCR process:", error.message);
-      if (error.response) {
-        console.error("API Response Data:", error.response.data);
-        console.error("API Response Status:", error.response.status);
-        console.error("API Response Headers:", error.response.headers);
-      } else if (error.request) {
-        console.error("No response received from API:", error.request);
-      }
+      error.response && console.error("API Response:", error.response.data);
       throw error;
     }
+  }
+  async processUrl(url) {
+    const imageResponse = await axios.get(url, {
+      responseType: "arraybuffer"
+    });
+    return {
+      buffer: Buffer.from(imageResponse.data),
+      contentType: imageResponse.headers["content-type"] || "image/jpeg",
+      filename: url.substring(url.lastIndexOf("/") + 1) || "image.jpg"
+    };
+  }
+  async processBase64(base64String) {
+    const base64Data = base64String.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, "base64");
+    const contentType = base64String.startsWith("data:image/png") ? "image/png" : base64String.startsWith("data:image/gif") ? "image/gif" : base64String.startsWith("data:image/webp") ? "image/webp" : "image/jpeg";
+    const extension = contentType.split("/")[1];
+    return {
+      buffer: buffer,
+      contentType: contentType,
+      filename: `image.${extension}`
+    };
+  }
+  async processBuffer(buffer, options = {}) {
+    return {
+      buffer: buffer,
+      contentType: options.contentType || "image/jpeg",
+      filename: options.filename || "image.jpg"
+    };
   }
 }
 export default async function handler(req, res) {
   const params = req.method === "GET" ? req.query : req.body;
-  if (!params.url) {
-    return res.status(400).json({
-      error: "Url is required"
-    });
-  }
-  const ocrService = new DecopyOCRService();
+  !params.image && res.status(400).json({
+    error: "Image is required"
+  });
   try {
-    const data = await ocrService.processImage(params);
+    const ocrService = new DecopyOCRService();
+    const data = await ocrService.processImage(params.image, {
+      contentType: params.contentType,
+      filename: params.filename
+    });
     return res.status(200).json(data);
   } catch (error) {
     res.status(500).json({

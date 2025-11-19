@@ -59,8 +59,8 @@ class IgDl {
       base: "https://sssinstagram.com",
       msec: "/msec",
       convert: "/api/convert",
-      ts: 1762570846271,
-      key: "a5d96f3a271bbd987211d7d4bd97787419c3cf25575b30cc033880a01ea53a4d",
+      ts: 1763458291571,
+      key: "701c4ea7812a249323c43f2773f893fa2e2522e8fc4b778b418b9a8c1d027483",
       payload: {
         format: "json",
         ref: null

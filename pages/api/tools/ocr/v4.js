@@ -8,25 +8,26 @@ class OCRService {
     this.urlUpload = "https://ocr.convertserver.com/php/ocrupload.php";
     this.urlProcess = "https://ocr.convertserver.com/php/apiocr.php";
   }
-  async uploadImage(url) {
+  async uploadImage(input, options = {}) {
     try {
-      const {
-        data: fileBuffer,
-        headers
-      } = await axios.get(url, {
-        responseType: "arraybuffer"
-      });
-      const ext = headers["content-type"].split("/")[1];
+      const isBuffer = Buffer.isBuffer(input);
+      const isBase64 = typeof input === "string" && input.startsWith("data:");
+      const isUrl = typeof input === "string" && (input.startsWith("http://") || input.startsWith("https://"));
+      const imageData = isBuffer ? await this.processBuffer(input, options) : isBase64 ? await this.processBase64(input) : isUrl ? await this.processUrl(input) : (() => {
+        throw new Error("Unsupported input type");
+      })();
       const form = new FormData();
-      form.append("files", new Blob([fileBuffer], {
-        type: headers["content-type"]
-      }), `file.${ext}`);
+      form.append("files", new Blob([imageData.buffer], {
+        type: imageData.contentType
+      }), imageData.filename);
       const {
         data
       } = await axios.post(this.urlUpload, form, {
         headers: form.headers
       });
-      if (!data.isSuccess) throw new Error("Upload failed");
+      !data.isSuccess && (() => {
+        throw new Error("Upload failed");
+      })();
       return data.files[0].name;
     } catch (error) {
       throw new Error(`Upload failed: ${error.message}`);
@@ -65,36 +66,69 @@ class OCRService {
       const callbackStart = data.indexOf(jsonps + "(");
       const callbackEnd = data.indexOf(")", callbackStart);
       const result = JSON.parse(data.slice(callbackStart + jsonps.length + 1, callbackEnd));
-      if (!result.success) throw new Error("OCR processing failed");
+      !result.success && (() => {
+        throw new Error("OCR processing failed");
+      })();
       return result;
     } catch (error) {
       throw new Error(`OCR processing failed: ${error.message}`);
     }
   }
-  async ocr({
-    url,
-    format = "docx",
-    lang = ["eng", "ind"]
-  }) {
+  async processImage(input, options = {}) {
     try {
-      const fileName = await this.uploadImage(url);
-      const result = await this.processOCR(fileName, format, lang);
+      const fileName = await this.uploadImage(input, options);
+      const result = await this.processOCR(fileName, options.format, options.lang);
       return result;
     } catch (error) {
       throw new Error(`OCR failed: ${error.message}`);
     }
   }
+  async processUrl(url) {
+    const {
+      data: fileBuffer,
+      headers
+    } = await axios.get(url, {
+      responseType: "arraybuffer"
+    });
+    const ext = headers["content-type"]?.split("/")[1] || "jpg";
+    return {
+      buffer: Buffer.from(fileBuffer),
+      contentType: headers["content-type"] || "image/jpeg",
+      filename: `file.${ext}`
+    };
+  }
+  async processBase64(base64String) {
+    const base64Data = base64String.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, "base64");
+    const contentType = base64String.startsWith("data:image/png") ? "image/png" : base64String.startsWith("data:image/gif") ? "image/gif" : base64String.startsWith("data:image/webp") ? "image/webp" : "image/jpeg";
+    const extension = contentType.split("/")[1];
+    return {
+      buffer: buffer,
+      contentType: contentType,
+      filename: `file.${extension}`
+    };
+  }
+  async processBuffer(buffer, options = {}) {
+    return {
+      buffer: buffer,
+      contentType: options.contentType || "image/jpeg",
+      filename: options.filename || "file.jpg"
+    };
+  }
 }
 export default async function handler(req, res) {
   const params = req.method === "GET" ? req.query : req.body;
-  if (!params.url) {
-    return res.status(400).json({
-      error: "Url is required"
-    });
-  }
-  const ocr = new OCRService();
+  !params.image && res.status(400).json({
+    error: "Image is required"
+  });
   try {
-    const data = await ocr.ocr(params);
+    const ocr = new OCRService();
+    const data = await ocr.processImage(params.image, {
+      format: params.format,
+      lang: params.lang,
+      contentType: params.contentType,
+      filename: params.filename
+    });
     return res.status(200).json(data);
   } catch (error) {
     res.status(500).json({

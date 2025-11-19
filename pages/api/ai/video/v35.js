@@ -581,7 +581,9 @@ class PolloAIService {
       data: data
     });
   }
-  async getTaskStatus(taskId) {
+  async getTaskStatus({
+    taskId
+  }) {
     const errors = this._validateRequired({
       taskId: taskId
     }, ["taskId"]);

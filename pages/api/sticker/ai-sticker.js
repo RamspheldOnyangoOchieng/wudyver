@@ -60,7 +60,7 @@ class StickerAPI {
     }
   }
   async search_list({
-    search = "",
+    query: search = "",
     device = "android",
     appversion = "1.0",
     country = "US",
@@ -88,7 +88,7 @@ class StickerAPI {
     }
   }
   async related({
-    packImgId
+    id: packImgId
   }) {
     try {
       console.log(`[POST] pack_images_basedPackSingleImg.php - packImgId: ${packImgId}`);
@@ -158,7 +158,7 @@ class StickerAPI {
     }
   }
   async prompt_status({
-    promptId
+    id: promptId
   }) {
     try {
       console.log(`[POST] get_prompt_status.php - promptId: ${promptId}`);
@@ -180,7 +180,7 @@ class StickerAPI {
     }
   }
   async cancel_prompt({
-    promptId
+    id: promptId
   }) {
     try {
       console.log(`[POST] cancel_process.php - promptId: ${promptId}`);
@@ -231,7 +231,7 @@ class StickerAPI {
     }
   }
   async face_status({
-    stickerId
+    id: stickerId
   }) {
     try {
       console.log(`[POST] get_face_sticker_status.php - stickerId: ${stickerId}`);
@@ -249,7 +249,7 @@ class StickerAPI {
     }
   }
   async cancel_face({
-    stickerId
+    id: stickerId
   }) {
     try {
       console.log(`[POST] cancel_face_sticker.php - stickerId: ${stickerId}`);
@@ -267,7 +267,7 @@ class StickerAPI {
     }
   }
   async report({
-    stickerId,
+    id: stickerId,
     type = "AI",
     desc = ""
   }) {
@@ -313,13 +313,13 @@ export default async function handler(req, res) {
         response = await api.search_list(params);
         break;
       case "related":
-        if (!params.packImgId) {
+        if (!params.id) {
           return res.status(400).json({
-            error: "Parameter 'packImgId' wajib untuk action 'related'.",
-            example: "action=related&packImgId=12345"
+            error: "Parameter 'id' wajib untuk action 'related'.",
+            example: "action=related&id=12345"
           });
         }
-        console.log("[ACTION] Getting related stickers for:", params.packImgId);
+        console.log("[ACTION] Getting related stickers for:", params.id);
         response = await api.related(params);
         break;
       case "emoji":
@@ -341,23 +341,23 @@ export default async function handler(req, res) {
         response = await api.add_prompt(params);
         break;
       case "prompt_status":
-        if (!params.promptId) {
+        if (!params.id) {
           return res.status(400).json({
-            error: "Parameter 'promptId' wajib untuk action 'prompt_status'.",
-            example: "action=prompt_status&promptId=123"
+            error: "Parameter 'id' wajib untuk action 'prompt_status'.",
+            example: "action=prompt_status&id=123"
           });
         }
-        console.log("[ACTION] Checking prompt status:", params.promptId);
+        console.log("[ACTION] Checking prompt status:", params.id);
         response = await api.prompt_status(params);
         break;
       case "cancel_prompt":
-        if (!params.promptId) {
+        if (!params.id) {
           return res.status(400).json({
-            error: "Parameter 'promptId' wajib untuk action 'cancel_prompt'.",
-            example: "action=cancel_prompt&promptId=123"
+            error: "Parameter 'id' wajib untuk action 'cancel_prompt'.",
+            example: "action=cancel_prompt&id=123"
           });
         }
-        console.log("[ACTION] Cancelling prompt:", params.promptId);
+        console.log("[ACTION] Cancelling prompt:", params.id);
         response = await api.cancel_prompt(params);
         break;
       case "add_face":
@@ -372,33 +372,33 @@ export default async function handler(req, res) {
         response = await api.add_face(params);
         break;
       case "face_status":
-        if (!params.stickerId) {
+        if (!params.id) {
           return res.status(400).json({
-            error: "Parameter 'stickerId' wajib untuk action 'face_status'.",
-            example: "action=face_status&stickerId=456"
+            error: "Parameter 'id' wajib untuk action 'face_status'.",
+            example: "action=face_status&id=456"
           });
         }
-        console.log("[ACTION] Checking face sticker status:", params.stickerId);
+        console.log("[ACTION] Checking face sticker status:", params.id);
         response = await api.face_status(params);
         break;
       case "cancel_face":
-        if (!params.stickerId) {
+        if (!params.id) {
           return res.status(400).json({
-            error: "Parameter 'stickerId' wajib untuk action 'cancel_face'.",
-            example: "action=cancel_face&stickerId=456"
+            error: "Parameter 'id' wajib untuk action 'cancel_face'.",
+            example: "action=cancel_face&id=456"
           });
         }
-        console.log("[ACTION] Cancelling face sticker:", params.stickerId);
+        console.log("[ACTION] Cancelling face sticker:", params.id);
         response = await api.cancel_face(params);
         break;
       case "report":
-        if (!params.stickerId) {
+        if (!params.id) {
           return res.status(400).json({
-            error: "Parameter 'stickerId' wajib untuk action 'report'.",
-            example: "action=report&stickerId=789&type=AI&desc=Inappropriate content"
+            error: "Parameter 'id' wajib untuk action 'report'.",
+            example: "action=report&id=789&type=AI&desc=Inappropriate content"
           });
         }
-        console.log("[ACTION] Reporting sticker:", params.stickerId);
+        console.log("[ACTION] Reporting sticker:", params.id);
         response = await api.report(params);
         break;
       default:
@@ -408,16 +408,16 @@ export default async function handler(req, res) {
           examples: {
             tags: "?action=tags",
             search: "?action=search&search=cat&page=1",
-            related: "?action=related&packImgId=12345",
+            related: "?action=related&id=12345",
             emoji: "?action=emoji",
             suggestions: "?action=suggestions",
             add_prompt: "?action=add_prompt&prompt=A dog wearing a hat",
-            prompt_status: "?action=prompt_status&promptId=123",
-            cancel_prompt: "?action=cancel_prompt&promptId=123",
+            prompt_status: "?action=prompt_status&id=123",
+            cancel_prompt: "?action=cancel_prompt&id=123",
             add_face: "?action=add_face&img=https://example.com/photo.jpg",
-            face_status: "?action=face_status&stickerId=456",
-            cancel_face: "?action=cancel_face&stickerId=456",
-            report: "?action=report&stickerId=789&type=AI&desc=Bad content"
+            face_status: "?action=face_status&id=456",
+            cancel_face: "?action=cancel_face&id=456",
+            report: "?action=report&id=789&type=AI&desc=Bad content"
           }
         });
     }

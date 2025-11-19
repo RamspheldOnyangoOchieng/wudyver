@@ -16,21 +16,73 @@ class GeminiAPI {
       "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
     };
   }
-  async getData(imageUrl) {
-    try {
-      const response = await axios.get(imageUrl, {
-        responseType: "arraybuffer"
-      });
+  isBase64(str) {
+    if (typeof str !== "string" || str.length === 0) {
+      return false;
+    }
+    const base64Regex = /^[A-Za-z0-9+/=]+$/;
+    if (!base64Regex.test(str)) {
+      return false;
+    }
+    let len = str.replace(/=+$/, "").length;
+    return len % 4 === 0;
+  }
+  async getData(input) {
+    const DEFAULT_BASE64_MIMETYPE = "image/jpeg";
+    if (input instanceof Buffer) {
       return {
         inline_data: {
-          mime_type: response.headers["content-type"],
-          data: Buffer.from(response.data, "binary").toString("base64")
+          mime_type: DEFAULT_BASE64_MIMETYPE,
+          data: input.toString("base64")
         }
       };
-    } catch (error) {
-      console.error(`Error fetching image from ${imageUrl}:`, error);
-      throw new Error(`Failed to fetch image from ${imageUrl}`);
     }
+    if (typeof input === "string") {
+      if (input.startsWith("data:")) {
+        const match = input.match(/^data:(image\/[a-z0-9\+\-\.]+);base64,(.*)$/i);
+        if (match && match.length === 3) {
+          const mimeType = match[1];
+          const base64Data = match[2];
+          if (!mimeType.startsWith("image/")) {
+            throw new Error(`Invalid MIME type in Base64 Data URL: ${mimeType}`);
+          }
+          return {
+            inline_data: {
+              mime_type: mimeType,
+              data: base64Data
+            }
+          };
+        }
+        throw new Error("Invalid Base64 Data URL format.");
+      }
+      if (this.isBase64(input)) {
+        return {
+          inline_data: {
+            mime_type: DEFAULT_BASE64_MIMETYPE,
+            data: input
+          }
+        };
+      }
+      try {
+        const response = await axios.get(input, {
+          responseType: "arraybuffer",
+          timeout: 1e4
+        });
+        const mimeType = response.headers["content-type"] || DEFAULT_BASE64_MIMETYPE;
+        if (!mimeType.startsWith("image/")) {
+          throw new Error(`Invalid MIME type fetched from URL: ${mimeType}`);
+        }
+        return {
+          inline_data: {
+            mime_type: mimeType,
+            data: Buffer.from(response.data).toString("base64")
+          }
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch image from URL ${input}: ${error.message}`);
+      }
+    }
+    throw new Error(`Invalid image input type. Expected URL (string), Base64 (string), or Buffer.`);
   }
   async chat({
     model = "gemini-2.0-flash-lite",

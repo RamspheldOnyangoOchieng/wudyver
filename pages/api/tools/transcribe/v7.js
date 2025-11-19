@@ -285,16 +285,17 @@ export default async function handler(req, res) {
   const params = req.method === "GET" ? req.query : req.body;
   if (!params.input) {
     return res.status(400).json({
-      error: "input are required"
+      error: "Parameter 'input' diperlukan"
     });
   }
+  const api = new VoiserClient();
   try {
-    const api = new VoiserClient();
-    const response = await api.generate(params);
-    return res.status(200).json(response);
+    const data = await api.generate(params);
+    return res.status(200).json(data);
   } catch (error) {
-    res.status(500).json({
-      error: error.message || "Internal Server Error"
+    const errorMessage = error.message || "Terjadi kesalahan saat memproses URL";
+    return res.status(500).json({
+      error: errorMessage
     });
   }
 }
