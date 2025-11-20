@@ -1,6 +1,7 @@
 import axios from "axios";
 import apiConfig from "@/configs/apiConfig";
-const OPENAPI_URL = `https://${apiConfig.DOMAIN_URL}/api/openapi`;
+const BASE_URL = `https://${apiConfig.DOMAIN_URL}/`;
+const OPENAPI_URL = `${BASE_URL}api/openapi`;
 async function fetchOpenAPIRoutes() {
   try {
     const response = await axios.get(OPENAPI_URL, {
@@ -30,10 +31,13 @@ export default async function handler(req, res) {
       method: req.method,
       path: req.url,
       timestamp: new Date().toISOString(),
-      availableRoutes: availableRoutes
+      playground: `${BASE_URL}try-it`,
+      swagger: `${BASE_URL}docs/swagger`,
+      rapidoc: `${BASE_URL}docs/rapidoc`,
+      stoplight: `${BASE_URL}docs/stoplight`,
+      available_routes: availableRoutes
     };
     res.setHeader("Content-Type", "application/json");
-    res.setHeader("Cache-Control", "no-store, max-age=0");
     return res.status(404).json(body);
   } catch (error) {
     console.error("Internal Server Error while processing 404:", error);
