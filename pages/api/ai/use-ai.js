@@ -8,6 +8,7 @@ import {
 import {
   v4 as uuidv4
 } from "uuid";
+import crypto from "crypto";
 import SpoofHead from "@/lib/spoof-head";
 class AIChatClient {
   constructor() {
@@ -17,157 +18,119 @@ class AIChatClient {
     this.jar = new CookieJar();
     this.client = wrapper(axios.create({
       jar: this.jar,
-      timeout: 3e4,
+      timeout: 6e4,
       headers: {
         "User-Agent": this.USER_AGENT,
-        "Accept-Language": "id-ID",
+        "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
         ...SpoofHead()
       }
     }));
-    this._cookiesInit = false;
+    this.sessionId = null;
+    this.chatId = null;
   }
-  _generateHex(length) {
-    return [...Array(length)].map(() => Math.floor(Math.random() * 16).toString(16)).join("");
+  _randomHex(len) {
+    return crypto.randomBytes(len / 2).toString("hex");
   }
-  _genData(chatId = uuidv4()) {
-    const messageId = this._generateHex(16).toUpperCase();
-    const sentryTraceId = this._generateHex(32);
-    const sentrySpanId = this._generateHex(16);
-    const sentrySampleRand = Math.random().toFixed(18);
-    return {
-      chatId: chatId,
-      messageId: messageId,
-      sentryTraceId: sentryTraceId,
-      sentrySpanId: sentrySpanId,
-      sentrySampleRand: sentrySampleRand,
-      traceHeader: `${sentryTraceId}-${sentrySpanId}-0`,
-      referer: `https://use.ai/id/chat/${chatId}`
-    };
-  }
-  async _initialRequest() {
-    if (this._cookiesInit) {
-      return;
+  async _initSession() {
+    if (this.sessionId) return;
+    console.log("[INIT] Mengambil session & cookie...");
+    const res = await this.client.get(this.CHAT_URL_INIT, {
+      headers: {
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-User": "?1",
+        "Sec-Fetch-Dest": "document"
+      },
+      maxRedirects: 5
+    });
+    const cookies = await this.jar.getCookies("https://use.ai");
+    const sessionCookie = cookies.find(c => c.key.includes("session") || c.key === "use_ai_session");
+    this.sessionId = sessionCookie ? sessionCookie.value : null;
+    if (!this.chatId) {
+      this.chatId = uuidv4();
     }
-    const headers = {
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-      "Cache-Control": "max-age=0",
-      Referer: "https://duckduckgo.com/",
-      "Upgrade-Insecure-Requests": "1"
-    };
-    try {
-      console.log(`[INIT] Melakukan permintaan GET ke ${this.CHAT_URL_INIT} untuk mendapatkan cookie sesi...`);
-      await this.client.get(this.CHAT_URL_INIT, {
-        headers: headers
-      });
-      this._cookiesInit = true;
-      console.log("[INIT] Cookie sesi berhasil didapatkan.");
-    } catch (error) {
-      console.error("Gagal pada Langkah Initial Request:", error.message);
-      throw error;
-    }
-  }
-  _parseStream(rawData) {
-    const lines = rawData.split("\n");
-    let fullText = "";
-    let info = {
-      ai_message_id: null,
-      is_done: false,
-      provider_metadata: null,
-      start_time: Date.now(),
-      end_time: null
-    };
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const jsonStr = line.substring(6).trim();
-        if (jsonStr === "[DONE]") {
-          info.is_done = true;
-          break;
-        }
-        try {
-          const data = JSON.parse(jsonStr);
-          if (data.type === "text-start") {
-            info.ai_message_id = data.id;
-            info.provider_metadata = data.providerMetadata;
-          } else if (data.type === "text-delta" && data.id === info.ai_message_id) {
-            fullText += data.delta;
-          } else if (data.type === "finish") {
-            info.is_done = true;
-            info.end_time = Date.now();
-          }
-        } catch (e) {}
-      }
-    }
-    if (!info.end_time) {
-      info.end_time = Date.now();
-    }
-    return {
-      fullText: fullText.trim(),
-      ...info
-    };
+    console.log("[INIT] Session ID:", this.sessionId?.slice(0, 20) + "...");
+    console.log("[INIT] Chat ID:", this.chatId);
   }
   async chat({
-    chat_id,
     prompt,
-    messages = [],
-    ...rest
+    chat_id,
+    model = "gateway-gpt-4o"
   }) {
-    if (!prompt) {
-      throw new Error("Parameter 'prompt' wajib diisi.");
-    }
-    if (!this._cookiesInit) {
-      await this._initialRequest();
-    }
-    const s = this._genData(chat_id);
-    const baggageHeader = `sentry-environment=production,sentry-release=3cd9b20bf71dbfb536dcebb060fe282828c1db39,sentry-public_key=905ff2a259425fa7167e7994687e7056,sentry-trace_id=${s.sentryTraceId},sentry-org_id=4509668407246848,sentry-sampled=false,sentry-sample_rand=${s.sentrySampleRand},sentry-sample_rate=0.01`;
+    if (!prompt) throw new Error("Prompt wajib diisi");
+    await this._initSession();
+    const messageId = uuidv4();
+    const traceId = this._randomHex(32);
+    const spanId = this._randomHex(16);
+    const sampledRand = Math.random().toFixed(17).slice(2);
+    const baggage = `sentry-environment=production,sentry-release=${this._randomHex(40)},sentry-public_key=905ff2a259425fa7167e7994687e7056,sentry-trace_id=${traceId},sentry-org_id=4509668407246848,sentry-sampled=false,sentry-sample_rand=0.${sampledRand},sentry-sample_rate=0.01`;
     const headers = {
       Accept: "*/*",
       "Content-Type": "application/json",
       Origin: "https://use.ai",
-      Referer: s.referer,
-      baggage: baggageHeader,
-      "sentry-trace": s.traceHeader
+      Referer: `https://use.ai/id/chat/${chat_id || this.chatId}`,
+      baggage: baggage,
+      "sentry-trace": `${traceId}-${spanId}-1`,
+      "x-use-ai-session-id": this.sessionId,
+      "sec-ch-ua": `"Chromium";v="127", "Not)A;Brand";v="99"`,
+      "sec-ch-ua-mobile": "?1",
+      "sec-ch-ua-platform": `"Android"`,
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      priority: "u=1, i"
     };
-    const userMessage = {
-      parts: [{
-        type: "text",
-        text: prompt
-      }],
-      id: s.messageId,
-      role: "user"
-    };
-    const messagePayload = messages.length ? messages.concat(userMessage) : [userMessage];
     const payload = {
-      chatId: s.chatId,
-      messages: messagePayload,
-      selectedChatModel: "gateway-gpt-5",
+      chatId: chat_id || this.chatId,
+      message: {
+        parts: [{
+          type: "text",
+          text: prompt
+        }],
+        id: messageId,
+        role: "user"
+      },
+      selectedChatModel: model,
       selectedVisibilityType: "private",
       retryLastMessage: false
     };
-    try {
-      console.log(`\n[CHAT] Mengirim pesan untuk chatId: ${s.chatId}. Pesan: "${prompt.substring(0, 30)}..."`);
-      const response = await this.client.post(this.CHAT_URL_API, payload, {
-        headers: headers,
-        responseType: "text"
+    console.log(`[CHAT] Mengirim: "${prompt.slice(0, 50)}..."`);
+    const response = await this.client.post(this.CHAT_URL_API, payload, {
+      headers: headers,
+      responseType: "stream"
+    });
+    let fullText = "";
+    let aiMessageId = null;
+    return new Promise((resolve, reject) => {
+      response.data.on("data", chunk => {
+        const lines = chunk.toString().split("\n");
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") {
+            resolve({
+              result: fullText.trim(),
+              chat_id: chat_id || this.chatId,
+              message_id: aiMessageId,
+              model: model
+            });
+            return;
+          }
+          try {
+            const json = JSON.parse(data);
+            if (json.type === "text-start") {
+              aiMessageId = json.id;
+            } else if (json.type === "text-delta" && json.id === aiMessageId) {
+              fullText += json.delta;
+              process.stdout.write(json.delta);
+            }
+          } catch {}
+        }
       });
-      const {
-        fullText,
-        ...info
-      } = this._parseStream(response.data);
-      console.log("[CHAT] Respons AI berhasil diproses.");
-      return {
-        result: fullText,
-        chat_id: s.chatId,
-        prompt_id: s.messageId,
-        ...info
-      };
-    } catch (error) {
-      console.error("[ERROR] Gagal mengirim pesan chat:", error.message);
-      if (error.response) {
-        const errorData = error.response.data.substring(0, 500) + (error.response.data.length > 500 ? "..." : "");
-        console.error("[ERROR] Respons Server (Detail):", errorData);
-      }
-      throw error;
-    }
+      response.data.on("error", err => reject(err));
+    });
   }
 }
 export default async function handler(req, res) {
