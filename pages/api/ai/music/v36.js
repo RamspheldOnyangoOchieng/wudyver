@@ -14,7 +14,7 @@ function getAgent(url) {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 class Api302Service {
   constructor() {
-    this.apiKeys = ApiKey.302ai;
+    this.apiKeys = ApiKey?.["302ai"];
     this.currentKeyIndex = 0;
     this.config = {
       endpoint: "https://api.302.ai",
