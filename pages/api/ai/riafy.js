@@ -154,48 +154,54 @@ class ApiClient {
     }
   }
   async dreamer({
-    image,
-    prompt = " ",
-    styles,
-    appname,
-    email,
-    size,
-    platform,
-    hdQuality,
-    mode,
-    fcmid,
-    deeplink,
+    prompt,
+    image = null,
+    styles = "high",
+    appname = "ai.headshot.generator.photo",
+    email = "riafyapps1@riafy.me",
+    size = "landscape",
+    platform = "riafyX",
+    hdQuality = "true",
+    mode = "modeN",
+    fcmid = null,
+    deeplink = null,
     ...rest
   }) {
     try {
       console.log("Dreamer API: Processing request...");
-      if (!image) {
-        throw new Error("Image is required for dreamer API");
+      if (!prompt) {
+        throw new Error("Prompt is required for dreamer API");
       }
-      let imageData = image;
-      if (typeof image === "object" && image?.preview?.startsWith("data:")) {
-        imageData = image.preview.split(",")[1];
-      } else if (Buffer.isBuffer(image)) {
-        imageData = image.toString("base64");
-      } else if (typeof image === "string" && image.startsWith("http")) {
-        const response = await axios.get(image, {
-          responseType: "arraybuffer"
-        });
-        imageData = Buffer.from(response.data, "binary").toString("base64");
+      let imageData = null;
+      if (image) {
+        if (typeof image === "object" && image?.preview?.startsWith("data:")) {
+          imageData = image.preview.split(",")[1];
+        } else if (Buffer.isBuffer(image)) {
+          imageData = image.toString("base64");
+        } else if (typeof image === "string" && image.startsWith("http")) {
+          const response = await axios.get(image, {
+            responseType: "arraybuffer"
+          });
+          imageData = Buffer.from(response.data, "binary").toString("base64");
+        } else if (typeof image === "string") {
+          imageData = image.includes(",") ? image.split(",")[1] : image;
+        }
       }
       const payload = {
-        appname: appname || this.cfg.defaults.appname,
-        prompt: prompt || " ",
+        appname: appname,
+        prompt: prompt,
         n: 1,
-        email: email || "riafyapps1@riafy.me",
-        size: size || "landscape",
-        platform: platform || "riafyX",
-        hdQuality: hdQuality ? "true" : "true",
-        mode: mode || "modeN",
-        styles: styles?.toUpperCase() || "HIGH",
-        image: imageData,
+        email: email,
+        size: size,
+        platform: platform,
+        hdQuality: hdQuality,
+        mode: mode,
+        styles: styles?.toUpperCase(),
         ...rest
       };
+      if (imageData) {
+        payload.image = imageData;
+      }
       if (fcmid) payload.fcmid = fcmid;
       if (deeplink) payload.deeplink = deeplink;
       console.log("Dreamer API: Sending request...");
@@ -214,27 +220,29 @@ class ApiClient {
     }
   }
   async raphael({
-    image,
     prompt = "make the photo anime style",
-    appname,
-    deviceId,
-    deeplink,
+    image = null,
+    appname = "ToonApp",
+    deviceId = null,
+    deeplink = "myapp://generation/result",
     ...rest
   }) {
     try {
       console.log("Raphael API: Processing image...");
-      if (!image) {
-        throw new Error("Image is required for raphael API");
+      if (!prompt) {
+        throw new Error("Prompt is required for raphael API");
       }
       const form = new FormData();
       form.append("prompt", prompt);
-      const buffer = await this.prepareImageBuffer(image);
-      form.append("input_image", buffer, {
-        filename: "input_image.jpg"
-      });
-      form.append("appName", appname || "ToonApp");
+      if (image) {
+        const buffer = await this.prepareImageBuffer(image);
+        form.append("input_image", buffer, {
+          filename: "input_image.jpg"
+        });
+      }
+      form.append("appName", appname);
       form.append("deviceId", deviceId || this.generateDeviceId());
-      form.append("deeplink", deeplink || "myapp://generation/result");
+      form.append("deeplink", deeplink);
       console.log("Raphael API: Uploading...");
       const res = await axios.post(this.cfg.endpoints.raphael, form, {
         headers: form.getHeaders()
@@ -248,15 +256,15 @@ class ApiClient {
   }
   async agePortrait({
     image,
-    gender,
-    age,
+    gender = null,
+    age = null,
     style = "high",
-    language,
-    appname,
-    deviceId,
-    generateVideo,
-    fcmid,
-    deeplink,
+    language = "en",
+    appname = null,
+    deviceId = null,
+    generateVideo = false,
+    fcmid = null,
+    deeplink = null,
     ...rest
   }) {
     try {
@@ -277,7 +285,7 @@ class ApiClient {
       if (gender) form.append("gender", gender);
       if (age) form.append("age", age);
       form.append("style", style);
-      form.append("language", language || "en");
+      form.append("language", language);
       form.append("generate_video", generateVideo ? "true" : "false");
       if (appname) form.append("appName", appname);
       if (deviceId) form.append("deviceId", deviceId || this.generateDeviceId());
@@ -294,15 +302,15 @@ class ApiClient {
   }
   async babyFace({
     image1,
-    image2,
-    gender,
+    image2 = null,
+    gender = null,
     style = "high",
-    language,
-    appname,
-    deviceId,
-    generateVideo,
-    fcmid,
-    deeplink,
+    language = "en",
+    appname = null,
+    deviceId = null,
+    generateVideo = false,
+    fcmid = null,
+    deeplink = "http://riafy.me/baby-gen-result",
     ...rest
   }) {
     try {
@@ -326,9 +334,9 @@ class ApiClient {
         form.append("gender", genderBaby);
       }
       form.append("style", style);
-      form.append("language", language || "en");
+      form.append("language", language);
       form.append("generate_video", generateVideo ? "true" : "false");
-      form.append("deeplink", deeplink || "http://riafy.me/baby-gen-result");
+      form.append("deeplink", deeplink);
       if (appname) form.append("appName", appname);
       if (deviceId) form.append("deviceId", deviceId || this.generateDeviceId());
       if (fcmid) form.append("fcmid", fcmid);
@@ -343,12 +351,12 @@ class ApiClient {
   }
   async hairStyle({
     image,
-    image1,
-    language,
-    appname,
-    deviceId,
-    fcmid,
-    deeplink,
+    image1 = null,
+    language = "en",
+    appname = null,
+    deviceId = null,
+    fcmid = null,
+    deeplink = null,
     ...rest
   }) {
     try {
@@ -368,7 +376,7 @@ class ApiClient {
           filename: "source.jpg"
         });
       }
-      form.append("language", language || "en");
+      form.append("language", language);
       if (appname) form.append("appName", appname);
       if (deviceId) form.append("deviceId", deviceId || this.generateDeviceId());
       if (fcmid) form.append("fcmid", fcmid);
@@ -385,17 +393,17 @@ class ApiClient {
   async coupleFaceSwap({
     image1,
     image2,
-    style,
-    gender,
-    platform,
-    generateVideo,
+    style = "high",
+    gender = null,
+    platform = "Android",
+    generateVideo = false,
     optimise = true,
-    language,
-    appname,
-    deviceId,
-    fcmid,
-    deeplink,
-    imageurl,
+    language = "en",
+    appname = null,
+    deviceId = null,
+    fcmid = null,
+    deeplink = null,
+    imageurl = null,
     ...rest
   }) {
     try {
@@ -404,8 +412,8 @@ class ApiClient {
         throw new Error("Both image1 and image2 are required for couple face swap API");
       }
       const form = new FormData();
-      form.append("platform", platform || "Android");
-      form.append("style", style);
+      form.append("platform", platform);
+      if (style) form.append("style", style);
       if (gender) form.append("gender", gender);
       form.append("generate_video", generateVideo ? "true" : "false");
       form.append("optimise", optimise ? "true" : "false");
@@ -417,7 +425,7 @@ class ApiClient {
       form.append("right_image", buffer2, {
         filename: "right_image.jpg"
       });
-      if (language) form.append("language", language || "en");
+      if (language) form.append("language", language);
       if (appname) form.append("appName", appname);
       if (deviceId) form.append("deviceId", deviceId || this.generateDeviceId());
       if (fcmid) form.append("fcmid", fcmid);
@@ -436,11 +444,11 @@ class ApiClient {
   }
   async portrait({
     image,
-    image1,
-    image2,
-    image3,
-    style,
-    gender,
+    image1 = null,
+    image2 = null,
+    image3 = null,
+    style = "high",
+    gender = null,
     ...rest
   }) {
     try {
@@ -449,7 +457,7 @@ class ApiClient {
         throw new Error("At least one image is required for portrait API");
       }
       const form = new FormData();
-      form.append("style", style);
+      if (style) form.append("style", style);
       if (gender) form.append("gender", gender);
       const images = [image, image1, image2, image3].filter(Boolean);
       for (let i = 0; i < images.length; i++) {
@@ -520,7 +528,7 @@ class ApiClient {
   }
   async decryptPayload({
     encrypted_payload,
-    image,
+    image = null,
     platform = "android",
     ...rest
   }) {
@@ -603,17 +611,17 @@ export default async function handler(req, res) {
         response = await api.getStyles(params);
         break;
       case "dreamer":
-        if (!params.image) {
+        if (!params.prompt) {
           return res.status(400).json({
-            error: "Parameter 'image' wajib diisi untuk action 'dreamer'."
+            error: "Parameter 'prompt' wajib diisi untuk action 'dreamer'."
           });
         }
         response = await api.dreamer(params);
         break;
       case "raphael":
-        if (!params.image) {
+        if (!params.prompt) {
           return res.status(400).json({
-            error: "Parameter 'image' wajib diisi untuk action 'raphael'."
+            error: "Parameter 'prompt' wajib diisi untuk action 'raphael'."
           });
         }
         response = await api.raphael(params);

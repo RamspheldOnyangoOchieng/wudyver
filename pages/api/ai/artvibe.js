@@ -9,7 +9,7 @@ class ArtVibeAPI {
     this.packName = "com.yes366.etm";
     this.appVersion = "1.06.52";
     this.deviceId = config.deviceId || this.randomDeviceId();
-    this.timeout = config.timeout || 12e4;
+    this.timeout = config.timeout || 36e4;
     this.headers = {
       "User-Agent": this.randomUserAgent(),
       "Accept-Encoding": "gzip",
@@ -187,7 +187,7 @@ class ArtVibeAPI {
         referenceUrl: referenceUrl || "",
         ...rest
       };
-      const workflow = imageUrl ? this.buildI2IWorkflow(prompt, imageData, generatedSeed, options) : this.buildT2IWorkflow(prompt, generatedSeed, options);
+      const workflow = this.buildT2IWorkflow(prompt, imageData, generatedSeed, options);
       const versionData = JSON.parse(this.headers["y-versions"]);
       versionData.wty = imageUrl ? 23 : 12;
       versionData.ast = imageUrl ? 2 : 0;
@@ -214,7 +214,7 @@ class ArtVibeAPI {
       }, {
         headers: headers,
         responseType: "stream",
-        timeout: 3e5
+        timeout: this.timeout
       });
       return await this.pollStream(response.data);
     } catch (err) {
@@ -239,7 +239,7 @@ class ArtVibeAPI {
       console.log("[PROCESS_IMAGE] Fetching image from URL...");
       const response = await axios.get(input, {
         responseType: "arraybuffer",
-        timeout: 3e4
+        timeout: this.timeout
       });
       return Buffer.from(response.data).toString("base64");
     } catch (err) {
@@ -247,9 +247,15 @@ class ArtVibeAPI {
       throw new Error(`Image processing failed: ${err?.message || "Unknown error"}`);
     }
   }
-  buildT2IWorkflow(prompt, seed, options) {
+  buildT2IWorkflow(prompt, imageData, seed, options) {
+    const timestamp = Date.now();
+    const filename = `upload_${timestamp}.png`;
+    const imagesArray = imageData ? [{
+      name: filename,
+      image: imageData
+    }] : null;
     return {
-      images: null,
+      images: imagesArray,
       workflow: {
         5: {
           inputs: {
@@ -310,117 +316,6 @@ class ArtVibeAPI {
       }
     };
   }
-  buildI2IWorkflow(prompt, imageData, seed, options) {
-    const timestamp = Date.now();
-    const filename = `upload_${timestamp}.png`;
-    return {
-      images: [{
-        name: filename,
-        image: imageData
-      }],
-      workflow: {
-        6: {
-          inputs: {
-            ckpt_name: options.model || "animagineXLV31_v31.safetensors",
-            vae_name: options.vae || "Baked VAE",
-            clip_skip: options.clipSkip || -2,
-            lora_name: "None",
-            lora_model_strength: 1,
-            lora_clip_strength: 1,
-            positive: ["58", 2],
-            negative: options.negative,
-            token_normalization: "none",
-            weight_interpretation: "comfy",
-            empty_latent_width: options.width,
-            empty_latent_height: options.height,
-            batch_size: options.batchSize || 1
-          },
-          class_type: "Efficient Loader"
-        },
-        50: {
-          inputs: {
-            image: filename,
-            upload: "image"
-          },
-          class_type: "LoadImage"
-        },
-        51: {
-          inputs: {
-            pixels: ["50", 0],
-            vae: ["6", 4]
-          },
-          class_type: "VAEEncode"
-        },
-        52: {
-          inputs: {
-            max_width: options.maxWidth || 832,
-            max_height: options.maxHeight || 1536,
-            min_width: 0,
-            min_height: 0,
-            crop_if_required: "no",
-            images: ["50", 0]
-          },
-          class_type: "ConstrainImage|pysssss"
-        },
-        57: {
-          inputs: {
-            seed: seed,
-            steps: options.steps,
-            cfg: options.cfg,
-            sampler_name: options.sampler || "euler_ancestral",
-            scheduler: options.scheduler || "normal",
-            denoise: options.denoise,
-            preview_method: "none",
-            vae_decode: "true",
-            model: ["44", 0],
-            positive: ["6", 1],
-            negative: ["6", 2],
-            latent_image: ["51", 0],
-            optional_vae: ["6", 4]
-          },
-          class_type: "KSampler (Efficient)"
-        },
-        58: {
-          inputs: {
-            text_input: prompt || "",
-            task: options.task || "prompt_gen_tags",
-            fill_mask: true,
-            keep_model_loaded: false,
-            max_new_tokens: 1024,
-            num_beams: 3,
-            do_sample: true,
-            output_mask_select: "",
-            seed: Math.floor(Math.random() * 1e15),
-            image: ["52", 0],
-            florence2_model: ["59", 0]
-          },
-          class_type: "Florence2Run"
-        },
-        59: {
-          inputs: {
-            model: options.florence2Model || "Florence-2-base-prompt",
-            precision: options.precision || "fp16",
-            attention: options.attention || "eager"
-          },
-          class_type: "Florence2ModelLoader"
-        },
-        60: {
-          inputs: {
-            filename_prefix: "ComfyUI",
-            format: options.format || "webp",
-            webp_quality: options.quality || 75,
-            images: ["57", 5]
-          },
-          class_type: "ETM_SaveImage"
-        }
-      },
-      workflow_parameters: {
-        seed: seed,
-        upload: filename,
-        reference_image_url: options.referenceUrl
-      }
-    };
-  }
   async pollStream(stream) {
     console.log("[POLL_STREAM] Starting stream polling...");
     let buffer = "";
@@ -428,7 +323,7 @@ class ArtVibeAPI {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error("Stream timeout after 5 minutes"));
-      }, 3e5);
+      }, this.timeout);
       stream.on("data", chunk => {
         try {
           buffer += chunk.toString();
@@ -515,8 +410,16 @@ export default async function handler(req, res) {
           });
         }
         response = await api.generate(params);
-        res.setHeader("Content-Type", "image/png");
-        return res.status(200).send(response.buffer);
+        if (response && response.buffer instanceof Buffer) {
+          res.setHeader("Content-Type", "image/png");
+          res.setHeader("Content-Length", response.length);
+          return res.status(200).send(response.buffer);
+        } else {
+          return res.status(500).json({
+            success: false,
+            error: "Output 'generate' tidak valid atau tidak berisi data gambar."
+          });
+        }
       default:
         return res.status(400).json({
           error: `Action tidak valid: ${action}`,
@@ -524,7 +427,10 @@ export default async function handler(req, res) {
         });
     }
   } catch (error) {
-    console.error(`[FATAL ERROR] Kegagalan pada action '${action}':`, error);
+    console.error(`[FATAL ERROR] Kegagalan pada action '${action}':`, error.message);
+    if (error.response?.data) {
+      console.error("API Response Data:", error.response.data);
+    }
     return res.status(500).json({
       success: false,
       error: error.message || "Terjadi kesalahan internal pada server.",
