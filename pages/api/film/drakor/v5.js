@@ -156,8 +156,15 @@ export default async function handler(req, res) {
     ...params
   } = req.method === "GET" ? req.query : req.body;
   if (!action) {
+    const availableActions = {
+      content_actions: ["new_posts", "ongoing", "categories"],
+      search_actions: ["search"],
+      category_actions: ["get_category"],
+      post_actions: ["get_post", "update_view", "get_related"]
+    };
     return res.status(400).json({
-      error: "Parameter 'action' wajib diisi."
+      error: "Parameter 'action' wajib diisi.",
+      available_actions: availableActions
     });
   }
   const api = new DrakorIDAPI();
@@ -196,16 +203,25 @@ export default async function handler(req, res) {
         break;
       case "get_related":
         if (!params.channel_id || !params.category_id) {
-          const missing = !params.channel_id ? "channel_id" : "category_id";
+          const missingParams = [];
+          if (!params.channel_id) missingParams.push("channel_id");
+          if (!params.category_id) missingParams.push("category_id");
           return res.status(400).json({
-            error: `Parameter '${missing}' wajib diisi untuk action 'get_related'.`
+            error: `Parameter berikut wajib diisi untuk action 'get_related': ${missingParams.join(", ")}.`
           });
         }
         response = await api.get_related(params);
         break;
       default:
+        const availableActions = {
+          content_actions: ["new_posts", "ongoing", "categories"],
+          search_actions: ["search"],
+          category_actions: ["get_category"],
+          post_actions: ["get_post", "update_view", "get_related"]
+        };
         return res.status(400).json({
-          error: `Action tidak valid: ${action}.`
+          error: `Action tidak valid: ${action}.`,
+          available_actions: availableActions
         });
     }
     return res.status(200).json(response);

@@ -230,8 +230,15 @@ export default async function handler(req, res) {
     ...params
   } = req.method === "GET" ? req.query : req.body;
   if (!action) {
+    const availableActions = {
+      content_actions: ["home", "premium", "app_config", "list_drakor", "list_drachin", "list_reality", "list_movie", "list_series"],
+      detail_actions: ["get_movie", "get_series", "by_genre"],
+      search_actions: ["search", "suggestions"],
+      user_actions: ["user_login", "user_register", "get_user"]
+    };
     return res.status(400).json({
-      error: "Parameter 'action' wajib diisi. Contoh: /api/drakorfix?action=list_drakor"
+      error: "Parameter 'action' wajib diisi. Contoh: /api/drakorfix?action=list_drakor",
+      available_actions: availableActions
     });
   }
   const api = new DrakorFixAPI();
@@ -277,9 +284,14 @@ export default async function handler(req, res) {
         break;
       case "user_register":
         if (!params.email || !params.password || !params.no_hp || !params.nama_lengkap || !params.onesignal_id) {
-          const missing = !params.email ? "email" : !params.password ? "password" : !params.no_hp ? "no_hp" : !params.nama_lengkap ? "nama_lengkap" : "onesignal_id";
+          const missingParams = [];
+          if (!params.email) missingParams.push("email");
+          if (!params.password) missingParams.push("password");
+          if (!params.no_hp) missingParams.push("no_hp");
+          if (!params.nama_lengkap) missingParams.push("nama_lengkap");
+          if (!params.onesignal_id) missingParams.push("onesignal_id");
           return res.status(400).json({
-            error: `Parameter '${missing}' dan lainnya wajib diisi untuk action 'user_register'.`
+            error: `Parameter berikut wajib diisi untuk action 'user_register': ${missingParams.join(", ")}.`
           });
         }
         response = await api.user_register(params);
@@ -293,8 +305,15 @@ export default async function handler(req, res) {
         response = await api.get_user(params);
         break;
       default:
+        const availableActions = {
+          content_actions: ["home", "premium", "app_config", "list_drakor", "list_drachin", "list_reality", "list_movie", "list_series"],
+          detail_actions: ["get_movie", "get_series", "by_genre"],
+          search_actions: ["search", "suggestions"],
+          user_actions: ["user_login", "user_register", "get_user"]
+        };
         return res.status(400).json({
-          error: `Action tidak valid: ${action}.`
+          error: `Action tidak valid: ${action}.`,
+          available_actions: availableActions
         });
     }
     return res.status(200).json(response);

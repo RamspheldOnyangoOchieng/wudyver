@@ -163,8 +163,16 @@ export default async function handler(req, res) {
     ...params
   } = req.method === "GET" ? req.query : req.body;
   if (!action) {
+    const availableActions = {
+      content_actions: ["genres", "home", "actors", "recent_ranking"],
+      detail_actions: ["poster", "get_actor", "roles", "seasons", "get_comment", "add_episode", "add_movie"],
+      search_actions: ["search"],
+      room_actions: ["get_room"],
+      genre_based_actions: ["series", "movies", "posters", "random"]
+    };
     return res.status(400).json({
-      error: "Parameter 'action' wajib diisi."
+      error: "Parameter 'action' wajib diisi.",
+      available_actions: availableActions
     });
   }
   const api = new DashDrakorAPI();
@@ -219,8 +227,16 @@ export default async function handler(req, res) {
         response = await api[action](params);
         break;
       default:
+        const availableActions = {
+          content_actions: ["genres", "home", "actors", "recent_ranking"],
+          detail_actions: ["poster", "get_actor", "roles", "seasons", "get_comment", "add_episode", "add_movie"],
+          search_actions: ["search"],
+          room_actions: ["get_room"],
+          genre_based_actions: ["series", "movies", "posters", "random"]
+        };
         return res.status(400).json({
-          error: `Action tidak valid: ${action}.`
+          error: `Action tidak valid: ${action}.`,
+          available_actions: availableActions
         });
     }
     return res.status(200).json(response);

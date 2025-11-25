@@ -491,7 +491,14 @@ export default async function handler(req, res) {
   } = req.method === "GET" ? req.query : req.body;
   if (!action) {
     return res.status(400).json({
-      error: "Parameter 'action' wajib diisi."
+      error: "Parameter 'action' wajib diisi.",
+      available_actions: {
+        user_actions: ["auto_init", "register", "user_info", "save_fcm"],
+        content_actions: ["slider", "latest", "ongoing", "trending", "variety_show", "by_genre", "by_artist", "origin_drama", "origin_film", "recommended", "history", "latest_on1", "categories"],
+        search_actions: ["search"],
+        detail_actions: ["get_info", "is_fav", "get_episodes", "artist_list", "comment_count"],
+        media_actions: ["download_link", "get_comments", "get_artists", "get_osts"]
+      }
     });
   }
   const api = new DrakorLaAPI();
@@ -560,8 +567,17 @@ export default async function handler(req, res) {
         response = await api[action](params);
         break;
       default:
+        const availableActions = {
+          user_actions: ["auto_init", "register", "user_info", "save_fcm"],
+          content_actions: ["slider", "latest", "ongoing", "trending", "variety_show", "by_genre", "by_artist", "origin_drama", "origin_film", "recommended", "history", "latest_on1", "categories"],
+          search_actions: ["search"],
+          detail_actions: ["get_info", "is_fav", "get_episodes", "artist_list", "comment_count"],
+          media_actions: ["download_link", "get_comments", "get_artists", "get_osts"]
+        };
         return res.status(400).json({
-          error: `Action tidak valid: ${action}`
+          error: `Action tidak valid: ${action}`,
+          available_actions: availableActions,
+          suggestion: "Gunakan salah satu action yang tersedia di atas"
         });
     }
     return res.status(200).json(response);
